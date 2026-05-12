@@ -1,7 +1,6 @@
 # CLAUDE.md — Twin
 
-This file is read by Claude Code at the start of every session.
-It defines architectural decisions, conventions, and constraints.
+This file defines architectural decisions, conventions, and constraints.
 Do not override these without explicit instruction from the project author.
 
 ---
