@@ -2,8 +2,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from lancedb import connect
-from lancedb import table
+from lancedb import connect, table
 from lancedb.pydantic import LanceModel, Vector
 
 from twin.ingestion.parser import Chunk
