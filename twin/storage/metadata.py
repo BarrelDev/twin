@@ -22,7 +22,10 @@ class MetadataStore:
         Args:
             db_path: Path to the .db file. Created if it does not exist.
         """
-        ...
+        engine = create_engine(f"sqlite:///{str(db_path)}") 
+        SQLModel.metadata.create_all(engine)
+
+        self._engine = engine
 
     def get_hash(self, source_path: str) -> str | None:
         """
@@ -34,7 +37,11 @@ class MetadataStore:
         Returns:
             Hex digest string if the file has been ingested, None otherwise.
         """
-        ...
+        with Session(self._engine) as session:
+            statement = select(DocRecord).where(DocRecord.source_path == source_path)
+            record = session.exec(statement).first()
+            return record.file_hash if record else None
+
 
     def upsert_doc(self, record: DocRecord) -> None:
         """
@@ -43,7 +50,9 @@ class MetadataStore:
         Args:
             record: DocRecord to persist. Overwrites any existing record with the same doc_id.
         """
-        ...
+        with Session(self._engine) as session:
+            session.merge(record)
+            session.commit()
 
     def delete_doc(self, doc_id: str) -> None:
         """
@@ -54,7 +63,11 @@ class MetadataStore:
         Args:
             doc_id: Primary key of the record to delete.
         """
-        ...
+        with Session(self._engine) as session:
+            record = session.get(DocRecord, doc_id)
+            if record:
+                session.delete(record)
+                session.commit()
 
     def list_docs(self) -> list[DocRecord]:
         """
@@ -63,4 +76,5 @@ class MetadataStore:
         Returns:
             List of DocRecord instances, one per ingested document.
         """
-        ...
+        with Session(self._engine) as session:
+            return list(session.exec(select(DocRecord)).all())
