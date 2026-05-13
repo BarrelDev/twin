@@ -69,6 +69,7 @@ class MetadataStore:
                 session.delete(record)
                 session.commit()
 
+
     def list_docs(self) -> list[DocRecord]:
         """
         Return all tracked document records.
