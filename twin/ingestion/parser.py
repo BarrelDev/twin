@@ -4,6 +4,9 @@ from pathlib import Path
 
 import yaml
 
+MAX_TOKENS = 512
+OVERLAP = 64
+
 
 @dataclass
 class Chunk:
@@ -99,7 +102,7 @@ def _parse_markdown_structure(content: str) -> list[tuple[list[str], str]]:
 
 
 def _split_section_into_chunks(
-    text: str, max_tokens: int = 512, overlap_tokens: int = 64
+    text: str, max_tokens: int = MAX_TOKENS, overlap_tokens: int = OVERLAP
 ) -> list[str]:
     """Split a section into chunks respecting token budget.
 
