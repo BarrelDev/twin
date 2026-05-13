@@ -1,0 +1,311 @@
+# twin
+
+**Twin** is a local-first semantic search engine for personal knowledge bases. It ingests a folder of Markdown notes, embeds them with a locally-run transformer model, and lets you query them with natural language — no API keys, no cloud, no tracking.
+
+> Stage 0 goal: prove that semantic search over personal notes is good enough to build on.
+
+<!-- FUTURE: add a coverage badge here once GitHub Actions CI is set up.
+     Steps:
+       1. Create .github/workflows/ci.yml — run `uv run pytest --cov=twin --cov-report=xml`
+       2. Connect the repo to codecov.io (free for public repos) or use the
+          shields.io/endpoint badge with the generated coverage.xml artifact
+       3. Replace this comment with:
+          [![Coverage](https://codecov.io/gh/BarrelDev/twin-repo/branch/master/graph/badge.svg)](https://codecov.io/gh/BarrelDev/twin-repo)
+-->
+
+---
+
+## Why It Exists
+
+Most "AI over your notes" tools are wrappers around OpenAI's API. That means your personal writing leaves your machine, you pay per query, and you stop using it the moment you lose internet. Twin is the opposite: every component runs offline, and the retrieval quality comes from deliberate data preparation choices, not from outsourcing to a hosted model.
+
+---
+
+## Demo
+
+```
+$ twin ingest ./notes
+Scanning ./notes ... 142 files found
+Chunking ... 1,203 chunks generated
+Embedding ... done (47s, nomic-embed-text-v1.5)
+Stored to ~/.twin
+
+$ twin query "What did I write about the Rust ownership model?"
+─────────────────────────────────────────────────────────────
+Result 1  [score: 0.91]  notes/languages/rust.md › Ownership
+  "Ownership in Rust is the mechanism by which the compiler
+   tracks which variables are responsible for freeing memory..."
+─────────────────────────────────────────────────────────────
+```
+
+*(Full CLI not yet wired — ingest and query commands are in progress)*
+
+<!-- FUTURE: replace the demo block above with an embedded GIF once the CLI is end-to-end.
+     Steps:
+       1. Install asciinema: `pip install asciinema`
+       2. Record: `asciinema rec demo.cast`
+          Run: twin ingest ./notes  →  twin query "What did I write about X?"
+       3. Convert to GIF: `agg demo.cast demo.gif` (https://github.com/asciinema/agg)
+       4. Commit demo.gif to the repo (or host on GitHub releases to keep repo size small)
+       5. Replace the fenced code block above with:
+          ![demo](demo.gif)
+          and remove this comment + the italics note below it.
+-->
+
+---
+
+## How It Works
+
+```
+Markdown files
+      │
+      ▼
+ parser.py          Heading-first chunking with 512-token budget,
+                    64-token overlap, frontmatter extraction
+      │
+      ▼
+ embedder.py        nomic-embed-text-v1.5 (768-dim), MTEB top-5
+                    for retrieval tasks. Separate prefixes for
+                    documents vs. queries as the model requires.
+      │
+      ▼
+ vector.py          LanceDB persistent store. ANN search,
+                    source_path filtering, metadata preserved.
+      │
+      ▼
+ retriever.py       Ranks results, formats output (in progress)
+      │
+      ▼
+ cli.py             Typer CLI — twin ingest / twin query
+```
+
+---
+
+## Architecture Decisions
+
+### Chunking strategy
+The primary split boundary is **markdown headings**, not arbitrary token windows. A heading boundary is a semantic boundary — it captures one topic, one argument, or one reference entry. Secondary splits are paragraph breaks. This hierarchy means chunks are coherent units of thought, not arbitrary slices of text.
+
+Chunks overlap by 64 tokens to prevent context loss at boundaries. The 512-token budget was chosen to balance retrieval precision (smaller is sharper) against context availability (larger gives the model more to work with). These are documented constants, not magic numbers.
+
+### Embedding model selection
+`nomic-ai/nomic-embed-text-v1.5` was selected after reviewing [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) benchmarks. It ranks in the top 5 for retrieval tasks among models that can run locally, at 768 dimensions (a sweet spot between accuracy and storage). It also requires task-specific prefixes (`search_document:` vs `search_query:`), which the embedder handles explicitly — this distinction matters for retrieval quality.
+
+### Idempotent ingestion
+Running `ingest` twice on an unchanged file does nothing. SHA-256 hashes of file content are stored in the metadata registry (SQLite). On ingest, hashes are compared; unchanged files are skipped, changed files replace their chunks. This is a data pipeline correctness requirement, not a performance optimization — without idempotency, repeated ingest produces duplicate results.
+
+### No abstraction frameworks
+Zero LangChain, LlamaIndex, or similar. Every component is a thin wrapper around its underlying library. This is intentional: abstractions obscure what's happening during retrieval, make debugging harder, and add dependencies that change breaking APIs frequently. The architecture is more lines of code, and more understandable.
+
+---
+
+## Tech Stack
+
+| Concern | Choice |
+|---|---|
+| Language | Python 3.11+ |
+| Embeddings | sentence-transformers (nomic-embed-text-v1.5) |
+| Vector store | LanceDB |
+| Metadata store | SQLite via SQLModel |
+| CLI | Typer |
+| Terminal output | Rich |
+| Testing | pytest |
+| Dependency management | uv |
+
+---
+
+## Project Structure
+
+```
+twin/
+  ingestion/
+    parser.py       # chunking, heading extraction, frontmatter parsing
+    embedder.py     # sentence-transformers wrapper, nomic prefix handling
+  storage/
+    vector.py       # LanceDB read/write, ANN search, source filtering
+    metadata.py     # SQLite document registry, hash-based dedup
+  query/
+    retriever.py    # search orchestration, result ranking (in progress)
+  cli.py            # twin ingest / twin query commands
+  config.py         # AppConfig dataclass, env-var overrides
+tests/
+  test_parser.py
+  test_embedder.py
+  test_vector.py
+  test_metadata.py
+  test_retriever.py
+  conftest.py
+```
+
+---
+
+## Current Status
+
+### Completed
+- [x] `parser.py` — heading-aware chunking with overlap, frontmatter extraction
+- [x] `embedder.py` — nomic-embed-text-v1.5, batch + query embedding, config-wired
+- [x] `vector.py` — LanceDB schema, write/search, source filtering, persistence
+- [x] `config.py` — AppConfig with env-var overrides, embedding dim from model enum
+- [x] Test suites for parser, embedder, and vector store
+
+### In Progress
+- [ ] `metadata.py` — SQLite document registry, hash dedup, change detection
+- [ ] `retriever.py` — search orchestration, result formatting
+- [ ] `cli.py` — wire ingest and query commands end-to-end
+
+#### `twin/storage/metadata.py`
+
+```python
+# from dataclasses import dataclass
+# from pathlib import Path
+# from sqlmodel import Field, Session, SQLModel, create_engine, select
+#
+# class DocRecord(SQLModel, table=True):
+#     doc_id:       str = Field(primary_key=True)
+#     source_path:  str
+#     content_hash: str            # SHA-256 of raw file bytes
+#     ingested_at:  str            # ISO-8601 timestamp
+#     chunk_count:  int
+#
+# class MetadataStore:
+#     def __init__(self, db_path: Path) -> None: ...
+#
+#     def get_hash(self, source_path: str) -> str | None:
+#         """Return stored SHA-256 for a file, or None if not yet ingested."""
+#         ...
+#
+#     def upsert_doc(self, record: DocRecord) -> None:
+#         """Insert or replace a document record."""
+#         ...
+#
+#     def delete_doc(self, doc_id: str) -> None:
+#         """Remove a document record (called before re-ingesting a changed file)."""
+#         ...
+#
+#     def list_docs(self) -> list[DocRecord]:
+#         """Return all tracked documents."""
+#         ...
+```
+
+#### `twin/query/retriever.py`
+
+```python
+# from dataclasses import dataclass
+# from twin.ingestion.embedder import Embedder
+# from twin.storage.vector import VectorStore, SearchResult
+#
+# @dataclass
+# class QueryResult:
+#     chunk_id:     str
+#     text:         str
+#     source_path:  str
+#     heading_path: list[str]
+#     score:        float
+#
+# class Retriever:
+#     def __init__(self, vector_store: VectorStore, embedder: Embedder) -> None: ...
+#
+#     def query(self, text: str, k: int = 5) -> list[QueryResult]:
+#         """Embed the query and return the top-k ranked results."""
+#         ...
+#
+#     def format_results(self, results: list[QueryResult]) -> str:
+#         """Render results as a Rich-formatted string for CLI output."""
+#         ...
+```
+
+#### `twin/cli.py` (wired)
+
+```python
+# @app.command()
+# def ingest(path: str = typer.Argument(..., help="Path to notes folder")) -> None:
+#     config   = AppConfig.from_env()
+#     store    = VectorStore(config.data_dir / "lancedb")
+#     meta     = MetadataStore(config.data_dir / "meta.db")
+#     embedder = build_embedder(config)
+#
+#     notes_dir = Path(path)
+#     for md_file in notes_dir.rglob("*.md"):
+#         file_hash = hashlib.sha256(md_file.read_bytes()).hexdigest()
+#         if meta.get_hash(str(md_file)) == file_hash:
+#             continue                          # unchanged — skip
+#         chunks = parse_file(md_file)
+#         embeddings = embedder.embed_batch([c.text for c in chunks])
+#         store.write_chunks(chunks, embeddings)
+#         meta.upsert_doc(DocRecord(..., content_hash=file_hash))
+#
+# @app.command()
+# def query(q: str = typer.Argument(..., help="Natural-language query")) -> None:
+#     config    = AppConfig.from_env()
+#     store     = VectorStore(config.data_dir / "lancedb")
+#     embedder  = build_embedder(config)
+#     retriever = Retriever(store, embedder)
+#     results   = retriever.query(q, k=config.top_k)
+#     console.print(retriever.format_results(results))
+```
+
+### Planned (Stage 1+)
+- FastAPI query endpoint
+- Obsidian vault file watcher
+- PDF and URL ingestion
+- LLM answer synthesis over retrieved chunks
+
+---
+
+## Installation
+
+Requires Python 3.11+ and [uv](https://github.com/astral-sh/uv).
+
+```bash
+git clone https://github.com/BarrelDev/twin-repo
+cd twin-repo
+uv sync
+```
+
+### Run tests
+
+```bash
+uv run pytest tests/ -v --cov=twin --cov-report=term-missing
+```
+
+> **Note:** The first test run downloads `nomic-embed-text-v1.5` (~270 MB) from Hugging Face. It is cached locally after that.
+
+### Use the CLI (Stage 0 target)
+
+```bash
+uv run python -m twin ingest ./notes
+uv run python -m twin query "What did I write about X?"
+```
+
+---
+
+## Configuration
+
+All runtime config is read from environment variables with sensible defaults. No config files to manage.
+
+| Variable | Default | Description |
+|---|---|---|
+| `SECONDBRAIN_DATA_DIR` | `~/.twin` | Where LanceDB and SQLite are stored |
+| `SECONDBRAIN_EMBED_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | Embedding model |
+| `SECONDBRAIN_CHUNK_TOKENS` | `512` | Max tokens per chunk |
+| `SECONDBRAIN_OVERLAP` | `64` | Overlap tokens between chunks |
+| `SECONDBRAIN_TOP_K` | `5` | Results returned per query |
+
+---
+
+## Design Document
+
+<!-- FUTURE: replace the CLAUDE.md link below with a DESIGN.md written for an external reader.
+     CLAUDE.md is an internal instruction file for Claude Code — not appropriate to surface publicly.
+     DESIGN.md should cover (adapt from CLAUDE.md, rewrite for a recruiter/collaborator audience):
+       - Problem framing: why local-first, why not OpenAI wrappers
+       - Chunking parameter decisions and the reasoning behind each
+       - Embedding model selection: MTEB benchmarks, why nomic-embed-text-v1.5
+       - Retrieval quality evaluation methodology
+       - Idempotent ingest design and why it matters for data pipelines
+       - Stage roadmap (0 → 1 → 2) and what changes at each stage
+       - Rust extension plan (twin-core) for the chunking hot path
+     Once DESIGN.md exists, update the link below.
+-->
+
+The full design rationale — chunking parameter decisions, retrieval quality evaluation methodology, Rust extension plan for the hot path, and stage roadmap — is in [`CLAUDE.md`](./CLAUDE.md).
