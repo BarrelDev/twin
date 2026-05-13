@@ -141,108 +141,32 @@ tests/
 
 ## Current Status
 
-### Completed
-- [x] `parser.py` — heading-aware chunking with overlap, frontmatter extraction
-- [x] `embedder.py` — nomic-embed-text-v1.5, batch + query embedding, config-wired
-- [x] `vector.py` — LanceDB schema, write/search, source filtering, persistence
-- [x] `config.py` — AppConfig with env-var overrides, embedding dim from model enum
-- [x] Test suites for parser, embedder, and vector store
+### Stage 0 — Complete
 
-### In Progress
-- [ ] `metadata.py` — SQLite document registry, hash dedup, change detection
-- [ ] `retriever.py` — search orchestration, result formatting
-- [ ] `cli.py` — wire ingest and query commands end-to-end
+All retrieval-core components are implemented and tested.
 
-#### `twin/storage/metadata.py`
+| Module | Description | Tests |
+|---|---|---|
+| `parser.py` | Heading-aware chunking, overlap, frontmatter extraction | `test_parser.py` |
+| `embedder.py` | nomic-embed-text-v1.5, batch + query embedding | `test_embedder.py` |
+| `vector.py` | LanceDB schema, write/search, source filtering, persistence | `test_vector.py` |
+| `config.py` | AppConfig with env-var overrides, model enum | — |
+| `metadata.py` | SQLite document registry, SHA-256 hash dedup, change detection | `test_metadata.py` |
+| `retriever.py` | Search orchestration, result ranking, Rich table formatting | `test_retriever.py` |
+| `cli.py` | `twin ingest` + `twin query` wired end-to-end | — |
+| `__main__.py` | `python -m twin` entry point | — |
 
-```python
-# from dataclasses import dataclass
-# from pathlib import Path
-# from sqlmodel import Field, Session, SQLModel, create_engine, select
-#
-# class DocRecord(SQLModel, table=True):
-#     doc_id:       str = Field(primary_key=True)
-#     source_path:  str
-#     content_hash: str            # SHA-256 of raw file bytes
-#     ingested_at:  str            # ISO-8601 timestamp
-#     chunk_count:  int
-#
-# class MetadataStore:
-#     def __init__(self, db_path: Path) -> None: ...
-#
-#     def get_hash(self, source_path: str) -> str | None:
-#         """Return stored SHA-256 for a file, or None if not yet ingested."""
-#         ...
-#
-#     def upsert_doc(self, record: DocRecord) -> None:
-#         """Insert or replace a document record."""
-#         ...
-#
-#     def delete_doc(self, doc_id: str) -> None:
-#         """Remove a document record (called before re-ingesting a changed file)."""
-#         ...
-#
-#     def list_docs(self) -> list[DocRecord]:
-#         """Return all tracked documents."""
-#         ...
-```
+**Test suite: 25 tests, 0 failures.**
 
-#### `twin/query/retriever.py`
+The retrieval quality bar — correct chunk in top-3 for all 5 known queries against a 10-document corpus with semantically distinct fillers — passes with `nomic-embed-text-v1.5`.
 
-```python
-# from dataclasses import dataclass
-# from twin.ingestion.embedder import Embedder
-# from twin.storage.vector import VectorStore, SearchResult
-#
-# @dataclass
-# class QueryResult:
-#     chunk_id:     str
-#     text:         str
-#     source_path:  str
-#     heading_path: list[str]
-#     score:        float
-#
-# class Retriever:
-#     def __init__(self, vector_store: VectorStore, embedder: Embedder) -> None: ...
-#
-#     def query(self, text: str, k: int = 5) -> list[QueryResult]:
-#         """Embed the query and return the top-k ranked results."""
-#         ...
-#
-#     def format_results(self, results: list[QueryResult]) -> str:
-#         """Render results as a Rich-formatted string for CLI output."""
-#         ...
-```
+### Next Steps
 
-#### `twin/cli.py` (wired)
-
-```python
-# @app.command()
-# def ingest(path: str = typer.Argument(..., help="Path to notes folder")) -> None:
-#     config   = AppConfig.from_env()
-#     store    = VectorStore(config.data_dir / "lancedb")
-#     meta     = MetadataStore(config.data_dir / "meta.db")
-#     embedder = build_embedder(config)
-#
-#     notes_dir = Path(path)
-#     for md_file in notes_dir.rglob("*.md"):
-#         file_hash = hashlib.sha256(md_file.read_bytes()).hexdigest()
-#         if meta.get_hash(str(md_file)) == file_hash:
-#             continue                          # unchanged — skip
-#         chunks = parse_file(md_file)
-#         embeddings = embedder.embed_batch([c.text for c in chunks])
-#         store.write_chunks(chunks, embeddings)
-#         meta.upsert_doc(DocRecord(..., content_hash=file_hash))
-#
-# @app.command()
-# def query(q: str = typer.Argument(..., help="Natural-language query")) -> None:
-#     config    = AppConfig.from_env()
-#     store     = VectorStore(config.data_dir / "lancedb")
-#     embedder  = build_embedder(config)
-#     retriever = Retriever(store, embedder)
-#     results   = retriever.query(q, k=config.top_k)
-#     console.print(retriever.format_results(results))
-```
+- [ ] End-to-end manual test against a real notes folder (see [Use the CLI](#use-the-cli-stage-0-target))
+- [ ] GitHub Actions CI: `uv run pytest --cov=twin --cov-report=xml` on push
+- [ ] Connect codecov for coverage badge (steps in source comment above)
+- [ ] `delete_chunks_by_doc_id` on `VectorStore` — needed to clean up LanceDB when a changed file is re-ingested (currently old chunks accumulate)
+- [ ] Write `DESIGN.md` for external readability (recruiter/collaborator audience)
 
 ### Planned (Stage 1+)
 - FastAPI query endpoint
