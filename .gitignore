@@ -16,3 +16,7 @@ uv.lock
 
 # claude
 .claude
+
+# misc. files
+.design_docs/
+.test_db/
