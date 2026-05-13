@@ -2,8 +2,11 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-import lancedb
+from lancedb import connect
+from lancedb import table
 from lancedb.pydantic import LanceModel, Vector
+
+from twin.ingestion.parser import Chunk
 
 TABLE_NAME = "chunks"
 EMBEDDING_DIM = 768
@@ -34,20 +37,20 @@ class VectorStore:
     """LanceDB-backed vector store for chunk embeddings."""
 
     def __init__(self, db_path: Path) -> None:
-        self._db = lancedb.connect(str(db_path))
-        self._table = self._db.create_table(TABLE_NAME)
+        self._db = connect(str(db_path))
+        self._table = self._open_or_create_table()
 
-    def _open_or_create_table(self) -> lancedb.table.Table:
+    def _open_or_create_table(self) -> table.Table:
         """Open the chunks table if it exists, otherwise create it."""
-        for s in self._db.table_names():
-            if s == TABLE_NAME:
-                return self._db.open_table(TABLE_NAME)
+        names = self._db.list_tables().tables
+        if TABLE_NAME in str(names):
+            return self._db.open_table(TABLE_NAME)
         
-        return self._db.create_table(TABLE_NAME)
+        return self._db.create_table(TABLE_NAME, schema=ChunkRecord)
 
     def write_chunks(
         self,
-        chunks: list,  # list[Chunk] — avoid circular import
+        chunks: list[Chunk],  # list[Chunk] — avoid circular import
         embeddings: list[list[float]],
     ) -> None:
         """
@@ -57,7 +60,21 @@ class VectorStore:
             chunks: Chunk objects to store.
             embeddings: Embedding vectors, one per chunk, same order.
         """
-        ...
+        table = self._open_or_create_table()
+        records = [
+            ChunkRecord(
+                chunk_id=c.chunk_id, 
+                doc_id=c.doc_id, 
+                text=c.text, 
+                embedding=e, 
+                source_path=c.source_path, 
+                heading_path=json.dumps(c.heading_path), 
+                chunk_index=c.chunk_index
+            )
+            for (c, e) in zip(chunks, embeddings)
+        ]
+        table.add(records)
+
 
     def search(
         self,
@@ -76,4 +93,24 @@ class VectorStore:
         Returns:
             List of SearchResult ordered by relevance (best first).
         """
-        ...
+        table = self._open_or_create_table()
+        query = table.search(query_embedding).limit(k)
+
+        if source_path: 
+            query = query.where(f"source_path = '{source_path}'")
+        results = query.to_list()
+
+        # Convert each 
+        def toSearchResult (row: dict) -> SearchResult:
+            return SearchResult(
+                chunk_id=row["chunk_id"],
+                doc_id=row["doc_id"],
+                text=row["text"],
+                source_path=row["source_path"],
+                heading_path=json.loads(row["heading_path"]),
+                chunk_index=row["chunk_index"],
+                score=row["_distance"],
+            )
+
+        return list(map(toSearchResult, results))
+

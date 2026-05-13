@@ -1,6 +1,15 @@
 import pytest
 from pathlib import Path
 
+from twin.config import EmbeddingModel
+from twin.ingestion.embedder import Embedder
+
+
+@pytest.fixture(scope="session")
+def embedder() -> Embedder:
+    """Session-scoped Embedder — loads the model once for the entire test run."""
+    return Embedder(model_name=EmbeddingModel.NOMIC.value, dim=768)
+
 
 @pytest.fixture
 def sample_markdown(tmp_path: Path) -> Path:
