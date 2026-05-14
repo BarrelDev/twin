@@ -20,3 +20,7 @@ uv.lock
 # misc. files
 .design_docs/
 .test_db/
+
+# rust generated files
+Cargo.lock
+twin-core/target/
