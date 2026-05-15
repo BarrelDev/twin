@@ -1,5 +1,3 @@
-use std::env::consts::EXE_SUFFIX;
-
 use pyo3::prelude::*;
 
 #[pyclass]
@@ -36,7 +34,7 @@ static SENTENCE_RE: Lazy<Regex> = Lazy::new(|| {
 fn split_long_paragraph(para: &str, budget: usize) -> Vec<String> {
     let mut result: Vec<String> = vec![];
     let mut current: Vec<String> = vec![];
-    let mut current_tokens: u32 = 0;
+    let mut current_tokens: usize = 0;
 
     for sent in SENTENCE_RE.split(para) {
         let sent = sent.trim();
@@ -54,7 +52,7 @@ fn split_long_paragraph(para: &str, budget: usize) -> Vec<String> {
             result.push(sent.to_string());
         } else if current_tokens + sent_tokens > budget {
             if !current.is_empty() {
-                result.push();
+                result.push(current.join(" "));
             }
             current = vec![sent.to_string()];
             current_tokens = sent_tokens;
@@ -85,7 +83,7 @@ fn apply_overlap(chunks: Vec<String>, overlap_tokens: usize) -> Vec<String> {
 
         let prev_sentences: Vec<&str> = SENTENCE_RE.split(prev).collect();
         let mut overlap_parts: Vec<&str> = vec![];
-        let mut overlap_count: u32 = 0;
+        let mut overlap_count: usize = 0;
 
         for sent in prev_sentences.iter().rev() {
             let t = crate::token::count_tokens(sent);
@@ -108,7 +106,7 @@ fn apply_overlap(chunks: Vec<String>, overlap_tokens: usize) -> Vec<String> {
     overlapped
 }
 
-fn parse_markdown_structure(content: String) -> Vec<(Vec<String>, String)> {
+fn parse_markdown_structure(content: &str) -> Vec<(Vec<String>, String)> {
     if content.trim().is_empty() {
         return vec![];
     }
@@ -180,7 +178,7 @@ fn split_section_into_chunks(text: &str, max_tokens: usize, overlap_tokens: usiz
                 current_tokens = 0;
             }
             chunks.extend(split_long_paragraph(para, effective_budget));
-        } else if current_token + para_tokens > effective_budget {
+        } else if current_tokens + para_tokens > effective_budget {
             if !current_chunk.is_empty() {
                 chunks.push(current_chunk.join("\n\n"));
             }
@@ -188,7 +186,7 @@ fn split_section_into_chunks(text: &str, max_tokens: usize, overlap_tokens: usiz
             current_tokens = para_tokens;
         } else {
             current_chunk.push(para.to_string());
-            current_chunk += para_tokens;
+            current_tokens += para_tokens;
         }
     }
 
@@ -197,4 +195,70 @@ fn split_section_into_chunks(text: &str, max_tokens: usize, overlap_tokens: usiz
     }
 
     apply_overlap(chunks, overlap_tokens)
+}
+
+pub fn chunk_text(
+    content: &str,
+    doc_id: &str,
+    source_path: &str,
+    max_tokens: usize,
+    overlap_tokens: usize,
+) -> Vec<Chunk> {
+    let sections = parse_markdown_structure(content);
+    let mut chunks: Vec<Chunk> = vec![];
+    let mut chunk_index: usize = 0;
+
+    for (heading_path, section_text) in sections {
+        for text in split_section_into_chunks(&section_text, max_tokens, overlap_tokens) {
+            if text.trim().is_empty() {
+                continue;
+            }
+
+            let token_count = crate::token::count_tokens(&text);
+            chunks.push(Chunk {
+                chunk_id: format!("{}_chunk_{}", doc_id, chunk_index),
+                doc_id: doc_id.to_string(),
+                text,
+                source_path: source_path.to_string(),
+                heading_path: heading_path.clone(),
+                chunk_index,
+                token_count,
+            });
+            chunk_index += 1;
+        }
+    }
+
+    chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_content_returns_no_chunks() {
+        assert!(chunk_text("", "doc", "/path", 512, 64).is_empty());
+    }
+
+    #[test]
+    fn headings_produce_separate_chunks() {
+        let md = "## First\n\nContent one.\n\n## Second\n\nContent two.";
+        let chunks = chunk_text(md, "doc", "/path", 512, 64);
+        assert_eq!(chunks.len(), 2);
+    }
+
+    #[test]
+    fn heading_path_is_preserved() {
+        let md = "# Parent\n\n## Child\n\nSome content here.";
+        let chunks = chunk_text(md, "doc", "/path", 512, 64);
+        assert!(chunks.iter().any(|c| c.heading_path == vec!["Parent", "Child"]));
+    }
+
+    #[test]
+    fn chunk_ids_are_sequential() {
+        let md = "## A\n\nContent.\n\n## B\n\nContent.";
+        let chunks = chunk_text(md, "doc", "/path", 512, 64);
+        assert_eq!(chunks[0].chunk_index, 0);
+        assert_eq!(chunks[1].chunk_index, 1);
+    }
 }
