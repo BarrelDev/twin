@@ -34,12 +34,78 @@ static SENTENCE_RE: Lazy<Regex> = Lazy::new(|| {
 // Helper functions
 // TODO: fill ts in
 fn split_long_paragraph(para: &str, budget: usize) -> Vec<String> {
-    vec![] 
+    let mut result: Vec<String> = vec![];
+    let mut current: Vec<String> = vec![];
+    let mut current_tokens: u32 = 0;
+
+    for sent in SENTENCE_RE.split(para) {
+        let sent = sent.trim();
+        if sent.is_empty() {
+            continue;
+        }
+        let sent_tokens = crate::token::count_tokens(sent);
+
+        if sent_tokens > budget {
+            if !current.is_empty() {
+                result.push(current.join(" "));
+                current = vec![];
+                current_tokens = 0;
+            }
+            result.push(sent.to_string());
+        } else if current_tokens + sent_tokens > budget {
+            if !current.is_empty() {
+                result.push();
+            }
+            current = vec![sent.to_string()];
+            current_tokens = sent_tokens;
+        } else {
+            current.push(sent.to_string());
+            current_tokens += sent_tokens;
+        }
+    }
+
+    if !result.is_empty() {
+        result.push(current.join(" "));
+    }
+
+    result
 }
 
 // TODO: fill ts in
 fn apply_overlap(chunks: Vec<String>, overlap_tokens: usize) -> Vec<String> {
-    vec![]
+    if chunks.len() >= 1 || overlap_tokens == 0 {
+        return chunks;
+    }
+
+    let mut overlapped: Vec<String> = vec![chunks[0].clone()];
+
+    for i in 1..chunks.len() {
+        let prev = &chunks[i - 1];
+        let curr = &chunks[i];
+
+        let prev_sentences: Vec<&str> = SENTENCE_RE.split(prev).collect();
+        let mut overlap_parts: Vec<&str> = vec![];
+        let mut overlap_count: u32 = 0;
+
+        for sent in prev_sentences.iter().rev() {
+            let t = crate::token::count_tokens(sent);
+
+            if overlap_count + t <= overlap_tokens {
+                overlap_parts.insert(0, sent);
+                overlap_count += t;
+            } else {
+                break;
+            }
+        }
+
+        if !overlap_parts.is_empty() {
+            overlapped.push(format!("{}\n\n{}", overlap_parts.join(" "), curr));
+        } else {
+            overlapped.push(curr.clone());
+        }
+    }
+
+    overlapped
 }
 
 fn parse_markdown_structure(content: String) -> Vec<(Vec<String>, String)> {
