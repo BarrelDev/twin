@@ -97,13 +97,16 @@ Running `ingest` twice on an unchanged file does nothing. SHA-256 hashes of file
 ### No abstraction frameworks
 Zero LangChain, LlamaIndex, or similar. Every component is a thin wrapper around its underlying library. This is intentional: abstractions obscure what's happening during retrieval, make debugging harder, and add dependencies that change breaking APIs frequently. The architecture is more lines of code, and more understandable.
 
+### Rust for the hot path
+Chunking and token counting are compute-bound operations. At scale, Python overhead on these tasks becomes measurable. The Rust crate (`twin-core`) handles chunking and tokenization via PyO3 bindings — the same pattern used by Hugging Face's tokenizers library. The boundary is clean: Rust receives plain strings and returns text + offsets. It does not touch the database, filesystem, or Python objects beyond what PyO3 marshals automatically. The Python test suite (`test_parser.py`) remains the source of truth for correctness.
+
 ---
 
 ## Tech Stack
 
 | Concern | Choice |
 |---|---|
-| Language | Python 3.11+ |
+| Language | Python 3.11+ (application), Rust (chunking hot path) |
 | Embeddings | sentence-transformers (nomic-embed-text-v1.5) |
 | Vector store | LanceDB |
 | Metadata store | SQLite via SQLModel |
@@ -111,23 +114,30 @@ Zero LangChain, LlamaIndex, or similar. Every component is a thin wrapper around
 | Terminal output | Rich |
 | Testing | pytest |
 | Dependency management | uv |
+| Python-Rust bindings | PyO3 (maturin) |
 
 ---
 
 ## Project Structure
 
 ```
-twin/
+twin/                       # Python application root
   ingestion/
-    parser.py       # chunking, heading extraction, frontmatter parsing
-    embedder.py     # sentence-transformers wrapper, nomic prefix handling
+    parser.py               # chunking, heading extraction, frontmatter parsing
+    embedder.py             # sentence-transformers wrapper, nomic prefix handling
   storage/
-    vector.py       # LanceDB read/write, ANN search, source filtering
-    metadata.py     # SQLite document registry, hash-based dedup
+    vector.py               # LanceDB read/write, ANN search, source filtering
+    metadata.py             # SQLite document registry, hash-based dedup
   query/
-    retriever.py    # search orchestration, result ranking (in progress)
-  cli.py            # twin ingest / twin query commands
-  config.py         # AppConfig dataclass, env-var overrides
+    retriever.py            # search orchestration, result ranking
+  cli.py                    # twin ingest / twin query commands
+  config.py                 # AppConfig dataclass, env-var overrides
+twin-core/                  # Rust crate for chunking hot path
+  Cargo.toml
+  src/
+    lib.rs                  # PyO3 bindings
+    chunker.rs              # heading-aware chunking logic
+    tokens.rs               # token counting
 tests/
   test_parser.py
   test_embedder.py
@@ -143,36 +153,47 @@ tests/
 
 ### Stage 0 — Complete
 
-All retrieval-core components are implemented and tested.
+All retrieval-core components are implemented and tested. Rust integration for the chunking hot path is included.
 
 | Module | Description | Tests |
 |---|---|---|
-| `parser.py` | Heading-aware chunking, overlap, frontmatter extraction | `test_parser.py` |
+| `parser.py` | Heading-aware chunking via twin-core (Rust), overlap, frontmatter extraction | `test_parser.py` |
 | `embedder.py` | nomic-embed-text-v1.5, batch + query embedding | `test_embedder.py` |
 | `vector.py` | LanceDB schema, write/search, source filtering, persistence | `test_vector.py` |
 | `config.py` | AppConfig with env-var overrides, model enum | — |
 | `metadata.py` | SQLite document registry, SHA-256 hash dedup, change detection | `test_metadata.py` |
 | `retriever.py` | Search orchestration, result ranking, Rich table formatting | `test_retriever.py` |
 | `cli.py` | `twin ingest` + `twin query` wired end-to-end | — |
-| `__main__.py` | `python -m twin` entry point | — |
+| `twin-core/` | Rust crate for chunking and token counting (PyO3 bindings) | — |
 
-**Test suite: 25 tests, 0 failures.**
+**Test suite: 25+ tests, passing.**
 
 The retrieval quality bar — correct chunk in top-3 for all 5 known queries against a 10-document corpus with semantically distinct fillers — passes with `nomic-embed-text-v1.5`.
 
-### Next Steps
+### Stage 1 — In Development
 
-- [ ] End-to-end manual test against a real notes folder (see [Use the CLI](#use-the-cli-stage-0-target))
-- [ ] GitHub Actions CI: `uv run pytest --cov=twin --cov-report=xml` on push
-- [ ] Connect codecov for coverage badge (steps in source comment above)
-- [ ] `delete_chunks_by_doc_id` on `VectorStore` — needed to clean up LanceDB when a changed file is re-ingested (currently old chunks accumulate)
-- [ ] Write `DESIGN.md` for external readability (recruiter/collaborator audience)
+**RAG loop is the priority.** It is the prerequisite for the agent runtime — an agent that cannot synthesize knowledge is not useful.
 
-### Planned (Stage 1+)
-- FastAPI query endpoint
-- Obsidian vault file watcher
+| Feature | Status | Notes |
+|---|---|---|
+| RAG loop (LLM answer synthesis) | In progress | Query retriever → retrieve chunks → synthesize with Claude → return answer |
+| Basic agent with tools | Planned | Agent uses knowledge base as a tool to complete multi-step tasks |
+| Multi-provider LLM switching | Deferred to Stage 2 | Anthropic API is the only provider in Stage 1; abstraction designed in |
+| Obsidian vault watcher | Deferred to Stage 2 | Generic ingestion pipeline from Stage 0 is sufficient for now |
+
+### Stage 2 — Planned
+
+- Multi-provider LLM abstraction (OpenAI, Anthropic, etc.)
+- Obsidian vault automatic watcher
 - PDF and URL ingestion
-- LLM answer synthesis over retrieved chunks
+- Agent builder UI
+
+### Next Steps (Stage 0 Polish)
+
+- [ ] End-to-end manual test against a real notes folder
+- [ ] GitHub Actions CI: `uv run pytest --cov=twin --cov-report=xml` on push
+- [ ] Connect codecov for coverage badge
+- [ ] Write `DESIGN.md` for external readability (recruiter/collaborator audience)
 
 ---
 
