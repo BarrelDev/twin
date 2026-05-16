@@ -29,6 +29,6 @@ dev = [
 twin = "twin.cli:app"
 
 [tool.maturin]
-manifest-path = "twin-core/Cargo.toml"
+manifest-path = "twin_core/Cargo.toml"
 python-source="."
 module-name="twin"

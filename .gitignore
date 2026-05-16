@@ -25,3 +25,4 @@ uv.lock
 # rust generated files
 Cargo.lock
 twin_core/target/
+*.pdb
