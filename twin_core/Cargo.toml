@@ -1,7 +1,10 @@
 [package]
-name = "twin-core"
-version = "0.1.0"
+name = "twin_core"
 edition = "2024"
+version = "0.1.0"
+
+[lib]
+crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.28.3"

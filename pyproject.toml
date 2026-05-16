@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "twin"
@@ -27,3 +27,8 @@ dev = [
 
 [project.scripts]
 twin = "twin.cli:app"
+
+[tool.maturin]
+manifest-path = "twin-core/Cargo.toml"
+python-source="."
+module-name="twin"
