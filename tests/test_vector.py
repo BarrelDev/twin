@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 
 from twin.ingestion.embedder import Embedder
-from twin.ingestion.parser import Chunk
 from twin.storage.vector import SearchResult, VectorStore
+from tests.conftest import MockChunk
 
 
 def _chunk(
@@ -12,8 +12,8 @@ def _chunk(
     text: str = "Generic filler content.",
     source: str = "/notes/doc.md",
     doc_id: str = "doc",
-) -> Chunk:
-    return Chunk(
+) -> MockChunk:
+    return MockChunk(
         chunk_id=f"{doc_id}_{index}",
         doc_id=doc_id,
         text=text,
@@ -59,7 +59,7 @@ class TestWriteChunks:
         assert len(results) == 10
 
     def test_write_preserves_all_metadata(self, tmp_path: Path) -> None:
-        chunk = Chunk(
+        chunk = MockChunk(
             chunk_id="meta_chunk_0",
             doc_id="meta_doc",
             text="Metadata preservation test.",
@@ -125,7 +125,7 @@ class TestSearch:
         assert not any(r.source_path == "/notes/b.md" for r in results)
 
     def test_semantic_relevance(self, tmp_path: Path, embedder: Embedder) -> None:
-        needle = Chunk(
+        needle = MockChunk(
             chunk_id="needle_0",
             doc_id="bio",
             text="The mitochondria is the powerhouse of the cell.",

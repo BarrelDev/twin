@@ -25,18 +25,43 @@ static HEADING_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^(#+)\s+(.+)$").unwrap()
 });
 
-static SENTENCE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?<=[.!?])\s+").unwrap()
-});
+// Helper function to split paragraph into sentences
+fn split_into_sentences(para: &str) -> Vec<String> {
+    let mut sentences = vec![];
+    let mut current = String::new();
+    let mut chars = para.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        current.push(ch);
+        if (ch == '.' || ch == '!' || ch == '?') && chars.peek().map_or(true, |&c| c.is_whitespace()) {
+            sentences.push(current.trim().to_string());
+            current.clear();
+            // Skip whitespace after sentence
+            while let Some(&c) = chars.peek() {
+                if c.is_whitespace() {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    if !current.trim().is_empty() {
+        sentences.push(current.trim().to_string());
+    }
+
+    sentences
+}
 
 // Helper functions
 // TODO: fill ts in
-fn split_long_paragraph(para: &str, budget: usize) -> Vec<String> {
+pub fn split_long_paragraph(para: &str, budget: usize) -> Vec<String> {
     let mut result: Vec<String> = vec![];
     let mut current: Vec<String> = vec![];
     let mut current_tokens: usize = 0;
 
-    for sent in SENTENCE_RE.split(para) {
+    for sent in split_into_sentences(para) {
         let sent = sent.trim();
         if sent.is_empty() {
             continue;
@@ -70,8 +95,8 @@ fn split_long_paragraph(para: &str, budget: usize) -> Vec<String> {
 }
 
 // TODO: fill ts in
-fn apply_overlap(chunks: Vec<String>, overlap_tokens: usize) -> Vec<String> {
-    if chunks.len() >= 1 || overlap_tokens == 0 {
+pub fn apply_overlap(chunks: Vec<String>, overlap_tokens: usize) -> Vec<String> {
+    if chunks.len() <= 1 || overlap_tokens == 0 {
         return chunks;
     }
 
@@ -81,15 +106,15 @@ fn apply_overlap(chunks: Vec<String>, overlap_tokens: usize) -> Vec<String> {
         let prev = &chunks[i - 1];
         let curr = &chunks[i];
 
-        let prev_sentences: Vec<&str> = SENTENCE_RE.split(prev).collect();
-        let mut overlap_parts: Vec<&str> = vec![];
+        let prev_sentences = split_into_sentences(prev);
+        let mut overlap_parts: Vec<String> = vec![];
         let mut overlap_count: usize = 0;
 
         for sent in prev_sentences.iter().rev() {
             let t = crate::token::count_tokens(sent);
 
             if overlap_count + t <= overlap_tokens {
-                overlap_parts.insert(0, sent);
+                overlap_parts.insert(0, sent.clone());
                 overlap_count += t;
             } else {
                 break;
@@ -106,7 +131,7 @@ fn apply_overlap(chunks: Vec<String>, overlap_tokens: usize) -> Vec<String> {
     overlapped
 }
 
-fn parse_markdown_structure(content: &str) -> Vec<(Vec<String>, String)> {
+pub fn parse_markdown_structure(content: &str) -> Vec<(Vec<String>, String)> {
     if content.trim().is_empty() {
         return vec![];
     }
@@ -145,7 +170,7 @@ fn parse_markdown_structure(content: &str) -> Vec<(Vec<String>, String)> {
     }
 }
 
-fn split_section_into_chunks(text: &str, max_tokens: usize, overlap_tokens: usize) -> Vec<String> {
+pub fn split_section_into_chunks(text: &str, max_tokens: usize, overlap_tokens: usize) -> Vec<String> {
     if text.trim().is_empty() {
         return vec![];
     }

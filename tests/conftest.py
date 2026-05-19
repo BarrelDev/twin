@@ -1,8 +1,21 @@
 import pytest
+from dataclasses import dataclass
 from pathlib import Path
 
 from twin.config import EmbeddingModel
 from twin.ingestion.embedder import Embedder
+
+
+@dataclass
+class MockChunk:
+    """Mock Chunk — mirrors the Rust Chunk structure for testing."""
+    chunk_id: str
+    doc_id: str
+    text: str
+    source_path: str
+    heading_path: list[str]
+    chunk_index: int
+    token_count: int
 
 
 @pytest.fixture(scope="session")

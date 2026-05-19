@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 
 from twin.ingestion.embedder import Embedder
-from twin.ingestion.parser import Chunk
 from twin.query.retriever import QueryResult, Retriever
 from twin.storage.vector import VectorStore
+from tests.conftest import MockChunk
 
 
 # ---------------------------------------------------------------------------
@@ -17,8 +17,8 @@ def _chunk(
     text: str,
     source: str = "/notes/doc.md",
     heading: str = "Section",
-) -> Chunk:
-    return Chunk(
+) -> MockChunk:
+    return MockChunk(
         chunk_id=chunk_id,
         doc_id=chunk_id.split("_")[0],
         text=text,

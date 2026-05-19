@@ -11,39 +11,29 @@ from twin.ingestion.parser import (
 
 
 class TestChunkDataclass:
-    """Test the Chunk dataclass structure and behavior."""
+    """Test the Chunk class structure and behavior."""
 
-    def test_chunk_creation(self) -> None:
-        """Verify Chunk can be instantiated with all required fields."""
-        chunk = Chunk(
-            chunk_id="chunk_0",
-            doc_id="doc_1",
-            text="Sample text",
-            source_path="/path/to/file.md",
-            heading_path=["Main", "Subsection"],
-            chunk_index=0,
-            token_count=50,
-        )
-        assert chunk.chunk_id == "chunk_0"
-        assert chunk.doc_id == "doc_1"
-        assert chunk.text == "Sample text"
-        assert chunk.source_path == "/path/to/file.md"
-        assert chunk.heading_path == ["Main", "Subsection"]
-        assert chunk.chunk_index == 0
-        assert chunk.token_count == 50
+    def test_chunk_creation(self, sample_markdown: Path) -> None:
+        """Verify Chunk has all required fields and they work correctly."""
+        chunks = parse_file(sample_markdown)
+        assert len(chunks) > 0
+        chunk = chunks[0]
 
-    def test_chunk_with_empty_heading_path(self) -> None:
+        # Verify all required attributes exist and are accessible
+        assert hasattr(chunk, "chunk_id") and isinstance(chunk.chunk_id, str)
+        assert hasattr(chunk, "doc_id") and isinstance(chunk.doc_id, str)
+        assert hasattr(chunk, "text") and isinstance(chunk.text, str)
+        assert hasattr(chunk, "source_path") and isinstance(chunk.source_path, str)
+        assert hasattr(chunk, "heading_path") and isinstance(chunk.heading_path, list)
+        assert hasattr(chunk, "chunk_index") and isinstance(chunk.chunk_index, int)
+        assert hasattr(chunk, "token_count") and isinstance(chunk.token_count, int)
+
+    def test_chunk_with_empty_heading_path(self, markdown_no_headings: Path) -> None:
         """Verify Chunk works with no heading context."""
-        chunk = Chunk(
-            chunk_id="chunk_1",
-            doc_id="doc_1",
-            text="Root level text",
-            source_path="/path/to/file.md",
-            heading_path=[],
-            chunk_index=0,
-            token_count=25,
-        )
-        assert chunk.heading_path == []
+        chunks = parse_file(markdown_no_headings)
+        assert len(chunks) > 0
+        # Chunks without headings should have empty heading_path
+        assert chunks[0].heading_path == []
 
 
 class TestTokenCounting:
