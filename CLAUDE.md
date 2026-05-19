@@ -26,6 +26,8 @@ python -m twin query "What did I write about X?"
 ```
 twin/
   __init__.py
+  config.py         # AppConfig dataclass, loaded from env or defaults
+  cli.py            # Typer CLI entrypoint
   ingestion/
     __init__.py
     parser.py       # file reading, chunking, frontmatter parsing
@@ -37,21 +39,36 @@ twin/
   query/
     __init__.py
     retriever.py    # search logic, result ranking, formatting
-  cli.py            # Typer CLI entrypoint (ingest + query commands only)
-  config.py         # AppConfig dataclass, loaded from env or defaults
+  llm/              # Phase 1: LLM abstraction
+    __init__.py
+    base.py         # Abstract LLMProvider interface
+    anthropic.py    # Anthropic API implementation
+  rag/              # Phase 1: RAG pipeline
+    __init__.py
+    pipeline.py     # retrieve → format → generate → return
+    context.py      # chunk formatting and attribution
+    prompts.py      # system prompt definitions
+  agent/            # Phase 1: Agent runtime
+    __init__.py
+    runtime.py      # tool-using LLM loop
+    tools.py        # tool definitions and dispatch
+    log.py          # activity log
 tests/
   test_parser.py
   test_embedder.py
   test_vector.py
   test_metadata.py
   test_retriever.py
+  test_rag_pipeline.py     # Phase 1
+  test_agent_runtime.py    # Phase 1
+  test_llm_client.py       # Phase 1
   conftest.py       # shared fixtures
 pyproject.toml
 CLAUDE.md
 README.md
 ```
 
-Do not create files outside this structure without asking first.
+Do not create files outside this structure without asking first. Phase 1 directories are already mapped above.
 
 ---
 
@@ -187,17 +204,42 @@ uv run pytest tests/ -v --cov=twin --cov-report=term-missing
 - Check if the function already exists before implementing — ask if unclear
 - Keep functions small and single-purpose
 - Run the relevant test after implementing to verify
+- When implementing Phase 1 features: test against the Anthropic API using a real API key in the test environment
 
 ## What Claude Code Should Never Do
 
 - Import from LangChain, LlamaIndex, or any high-abstraction AI framework
-- Use OpenAI API or any external API (Stage 0 is fully local)
+- Use OpenAI API or any external API in Stage 0 (Phase 1 uses Anthropic only)
 - Add new dependencies without noting them explicitly — list them so the author can approve
 - Create files outside the defined directory structure
 - Write to real filesystem paths in tests
 - Use `dict` where a `dataclass` would be clearer
 - Skip type hints "for brevity"
 - Suggest switching the vector DB, embedding model, or metadata store
+- Hardcode model names or API keys — always read from config or environment variables
+
+---
+
+## Phase 1 Specific Notes
+
+When implementing RAG and agent features, keep these constraints in mind:
+
+### LLM Client
+- The LLMProvider interface in `llm/base.py` must remain provider-agnostic
+- Anthropic is the only implementation in Phase 1; design the interface so Phase 2 can add OpenAI, Google, etc. without modifying RAG or agent code
+- Always read `ANTHROPIC_API_KEY` from environment; raise clear error if missing
+
+### RAG Pipeline
+- System prompt must enforce three constraints: answer only from context, cite sources, admit uncertainty when appropriate
+- Context formatting in `rag/context.py` must preserve source attribution (filename + heading path) on every chunk
+- Chunk token budget: 2560 tokens for top-5 chunks (512 tokens each)
+- All outputs must include a deduplicated source list alongside the answer
+
+### Agent Runtime
+- Tool definitions must be precise and clear — the model must understand exactly when and how to use the KB search tool
+- Agent loop has two termination conditions: final answer without tool call, or max iteration count (default: 5)
+- Activity log must track every tool call, its query, results, and final answer — this is for debugging and transparency
+- Do not implement write-back to knowledge base in Phase 1 — agents are read-only
 
 ---
 
@@ -207,13 +249,18 @@ All runtime config lives in `twin/config.py` as an `AppConfig` dataclass.
 Loaded from environment variables with sensible defaults.
 No hardcoded paths or model names outside of config.py and the enums in their respective modules.
 
-Key config values:
+**Stage 0 — Retrieval config:**
 ```
 SECONDBRAIN_DATA_DIR     # where LanceDB and SQLite live, default: ~/.twin
 SECONDBRAIN_EMBED_MODEL  # embedding model, default: nomic-ai/nomic-embed-text-v1.5
 SECONDBRAIN_CHUNK_TOKENS # max tokens per chunk, default: 512
 SECONDBRAIN_OVERLAP      # overlap tokens, default: 64
 SECONDBRAIN_TOP_K        # results returned per query, default: 5
+```
+
+**Phase 1 — LLM config:**
+```
+ANTHROPIC_API_KEY        # required for RAG and agent commands. Raise clear error if missing.
 ```
 
 ---
@@ -255,11 +302,72 @@ beyond what PyO3 marshals automatically. Keep the boundary narrow.
 
 ---
 
-## Current Stage: 0
+## Current Stage: Phase 1 (In Development)
 
-Stages exist. Do not implement anything from Stage 1+ unless explicitly asked.
+Stage 0 is complete and validated. Phase 1 adds a RAG loop and a basic agent with tool access.
 
-Stage 1 will add: FastAPI server, multi-provider LLM, basic agent loop, Obsidian watcher.
-Stage 2 will add: agent builder UI, bidirectional KB write-back, PDF/URL ingestion.
+### Phase 1 Goals (In Order of Dependency)
+1. **Close the RAG loop** — Retrieved chunks are passed to an LLM that synthesizes a grounded, attributed answer.
+2. **Basic agent with tools** — A configured LLM instance that can search the knowledge base, incorporate results, and reason across multiple retrieval steps.
 
-For now, none of that exists. Focus on ingest and query working well.
+### Phase 1 Architecture Additions
+
+**New Directories:**
+```
+twin/
+  llm/                   # LLM provider abstraction
+    __init__.py
+    base.py              # Abstract interface
+    anthropic.py         # Anthropic implementation
+  rag/                   # RAG pipeline
+    __init__.py
+    pipeline.py          # Retrieve → format → generate → return
+    context.py           # Chunk formatting and attribution
+    prompts.py           # System prompt definitions
+  agent/                 # Agent runtime
+    __init__.py
+    runtime.py           # Tool-using LLM loop
+    tools.py             # Tool definitions and dispatch
+    log.py               # Activity log
+```
+
+**New CLI Commands:**
+- `twin rag <query>` — Synthesize an answer from retrieved context with source attribution.
+- `twin agent <task>` — Invoke the agent to complete a multi-step task.
+
+**The RAG Pipeline (Four Steps):**
+1. Retrieve chunks from Stage 0 retriever
+2. Format chunks as context with source attribution
+3. Call LLM with system prompt (answer only from context, cite sources, admit uncertainty)
+4. Return synthesized answer with source list
+
+**The Agent Loop:**
+- Receives a task description
+- Decides whether and when to search the knowledge base
+- Can retrieve multiple times within a single response
+- Chains reasoning across multiple search results
+- Terminates on final answer or iteration limit (max 5 tool calls)
+
+**LLM Client Design:**
+- Thin wrapper around Anthropic API (Phase 1 only)
+- Designed as abstract interface for Phase 2 multi-provider support
+- Reads `ANTHROPIC_API_KEY` from environment at initialization
+
+### What Is Deferred from Phase 1
+
+These items are designed into Phase 1 but implementation is deferred to Phase 2+:
+- Multi-provider LLM switching (interface designed, Anthropic only in Phase 1)
+- Obsidian vault watcher (generic Markdown ingestion sufficient for Phase 1)
+- Streaming responses (improves UX but not load-bearing)
+- Cost tracking and token accounting
+- Agent write-back to knowledge base
+
+### Next Steps (Phase 1 Build Order)
+
+1. Build LLM client and Anthropic implementation
+2. Build context formatter for RAG pipeline
+3. Wire RAG pipeline (retriever + formatter + LLM)
+4. Define KB search tool and dispatch logic
+5. Build agent runtime and tool-using loop
+
+Stage 2 will add: multi-provider LLM switching UI, Obsidian integration, PDF/URL ingestion, agent builder UI.

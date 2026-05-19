@@ -130,7 +130,18 @@ twin/                       # Python application root
     metadata.py             # SQLite document registry, hash-based dedup
   query/
     retriever.py            # search orchestration, result ranking
-  cli.py                    # twin ingest / twin query commands
+  llm/                      # Phase 1: LLM provider abstraction
+    base.py                 # Abstract LLMProvider interface
+    anthropic.py            # Anthropic API implementation
+  rag/                      # Phase 1: RAG pipeline
+    pipeline.py             # Retrieve → format → generate → return
+    context.py              # Chunk formatting and source attribution
+    prompts.py              # System prompt definitions
+  agent/                    # Phase 1: Agent runtime
+    runtime.py              # Tool-using LLM loop
+    tools.py                # Tool definitions and dispatch
+    log.py                  # Activity log
+  cli.py                    # Typer CLI commands (ingest, query, rag, agent)
   config.py                 # AppConfig dataclass, env-var overrides
 twin-core/                  # Rust crate for chunking hot path
   Cargo.toml
@@ -144,6 +155,9 @@ tests/
   test_vector.py
   test_metadata.py
   test_retriever.py
+  test_rag_pipeline.py      # Phase 1
+  test_agent_runtime.py     # Phase 1
+  test_llm_client.py        # Phase 1
   conftest.py
 ```
 
@@ -151,9 +165,9 @@ tests/
 
 ## Current Status
 
-### Stage 0 — Complete
+### Stage 0 — Complete ✓
 
-All retrieval-core components are implemented and tested. Rust integration for the chunking hot path is included.
+All retrieval-core components are implemented and tested. Rust integration for the chunking hot path is complete.
 
 | Module | Description | Tests |
 |---|---|---|
@@ -166,34 +180,69 @@ All retrieval-core components are implemented and tested. Rust integration for t
 | `cli.py` | `twin ingest` + `twin query` wired end-to-end | — |
 | `twin-core/` | Rust crate for chunking and token counting (PyO3 bindings) | — |
 
-**Test suite: 25+ tests, passing.**
+**Test suite: 25+ tests, passing.** Retrieval quality bar (correct chunk in top-3 for all known queries against a 10-document corpus) passes with `nomic-embed-text-v1.5`.
 
-The retrieval quality bar — correct chunk in top-3 for all 5 known queries against a 10-document corpus with semantically distinct fillers — passes with `nomic-embed-text-v1.5`.
+The two Stage 0 CLI commands are complete:
+```bash
+python -m twin ingest ./notes
+python -m twin query "What did I write about X?"
+```
 
-### Stage 1 — In Development
+---
 
-**RAG loop is the priority.** It is the prerequisite for the agent runtime — an agent that cannot synthesize knowledge is not useful.
+### Phase 1 — In Development
 
-| Feature | Status | Notes |
+**Priority: Close the RAG loop.** Retrieval is only useful if retrieved chunks can be synthesized into coherent answers with proper source attribution. The RAG pipeline is the prerequisite for the agent runtime.
+
+#### Phase 1 Architecture (New Components)
+
+| Component | Description | Status |
 |---|---|---|
-| RAG loop (LLM answer synthesis) | In progress | Query retriever → retrieve chunks → synthesize with Claude → return answer |
-| Basic agent with tools | Planned | Agent uses knowledge base as a tool to complete multi-step tasks |
-| Multi-provider LLM switching | Deferred to Stage 2 | Anthropic API is the only provider in Stage 1; abstraction designed in |
-| Obsidian vault watcher | Deferred to Stage 2 | Generic ingestion pipeline from Stage 0 is sufficient for now |
+| **LLM Client** | Thin wrapper around Anthropic API with provider abstraction interface | Planned |
+| **RAG Pipeline** | Orchestrates retrieve → format context → generate → return with attribution | Planned |
+| **Agent Runtime** | Tool-using LLM loop with KB search as the first tool | Planned |
+| **Context Formatter** | Formats retrieved chunks with source attribution for LLM consumption | Planned |
 
-### Stage 2 — Planned
+#### Phase 1 CLI Commands (New)
 
-- Multi-provider LLM abstraction (OpenAI, Anthropic, etc.)
-- Obsidian vault automatic watcher
+| Command | Behavior |
+|---|---|
+| `twin rag <query>` | Synthesize an answer from retrieved context with source attribution |
+| `twin agent <task>` | Invoke the agent to complete a multi-step task using KB search tool |
+
+Both Stage 0 commands (`twin ingest` and `twin query`) remain unchanged and available for raw retrieval debugging.
+
+#### Phase 1 Build Sequence
+
+1. **LLM Client** — Anthropic API wrapper with abstract interface
+2. **Context Formatter** — Chunk formatting with source attribution
+3. **RAG Pipeline** — Retriever + formatter + LLM + system prompt
+4. **Tool Dispatch** — KB search tool definition and execution
+5. **Agent Runtime** — Tool-using loop with iteration limit and activity log
+
+#### Phase 1 Deferred (to Phase 2+)
+
+- Multi-provider LLM switching (interface designed, Anthropic only in Phase 1)
+- Obsidian vault watcher
+- Streaming responses
+- Cost and token tracking
+- Agent write-back to knowledge base
+
+### Phase 2+ — Planned
+
+- Multi-provider LLM abstraction (OpenAI, Google, Groq, Ollama)
+- Obsidian vault automatic watcher with bidirectional sync
 - PDF and URL ingestion
 - Agent builder UI
+- LLM settings UI (model selection, temperature, context window management)
 
-### Next Steps (Stage 0 Polish)
+### Next Steps (Phase 1 Implementation)
 
-- [ ] End-to-end manual test against a real notes folder
-- [ ] GitHub Actions CI: `uv run pytest --cov=twin --cov-report=xml` on push
-- [ ] Connect codecov for coverage badge
-- [ ] Write `DESIGN.md` for external readability (recruiter/collaborator audience)
+- [ ] Implement LLM client with Anthropic provider
+- [ ] Implement context formatter with source attribution
+- [ ] Wire RAG pipeline and test with real queries
+- [ ] Define KB search tool and agent loop
+- [ ] Manual evaluation of agent reasoning on multi-step tasks
 
 ---
 
@@ -228,6 +277,8 @@ uv run python -m twin query "What did I write about X?"
 
 All runtime config is read from environment variables with sensible defaults. No config files to manage.
 
+### Stage 0 — Retrieval Configuration
+
 | Variable | Default | Description |
 |---|---|---|
 | `SECONDBRAIN_DATA_DIR` | `~/.twin` | Where LanceDB and SQLite are stored |
@@ -235,6 +286,18 @@ All runtime config is read from environment variables with sensible defaults. No
 | `SECONDBRAIN_CHUNK_TOKENS` | `512` | Max tokens per chunk |
 | `SECONDBRAIN_OVERLAP` | `64` | Overlap tokens between chunks |
 | `SECONDBRAIN_TOP_K` | `5` | Results returned per query |
+
+### Phase 1 — LLM Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | (required) | Anthropic API key for RAG and agent features |
+
+Set this environment variable before running RAG or agent commands:
+```bash
+export ANTHROPIC_API_KEY="your-key-here"
+uv run python -m twin rag "What did I write about X?"
+```
 
 ---
 
