@@ -5,11 +5,13 @@ provides a dispatcher to route tool calls from the LLM to their implementations.
 """
 
 from typing import Any
+from dataclasses import dataclass
 
 from twin.query.retriever import Retriever
 from twin.rag.context import prepare_rag_context
 
 
+@dataclass
 class ToolDefinition:
     """
     Schema for a tool that the LLM can call.
@@ -17,9 +19,33 @@ class ToolDefinition:
     Represents a tool definition in the format expected by the LLM provider
     (e.g., Anthropic's tool format).
     """
+    name: str
+    """Tool name, e.g., 'search_knowledge_base.'."""
 
-    # TODO: Define the structure (name, description, input_schema)
-    pass
+    description: str
+    """Human-readable description of what the tool does."""
+
+    input_schema: dict
+    """
+    JSON Schema for tool input parameters
+
+    Example:
+    {
+        "type": "object,
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search query"
+            },
+            "k": {
+                "type": "integer",
+                "description": "Number of results",
+                "default": 5
+            }
+        },
+        "required": ["query"]
+    }
+    """
 
 
 def get_kb_search_tool() -> ToolDefinition:
@@ -36,7 +62,29 @@ def get_kb_search_tool() -> ToolDefinition:
     # - name: "search_knowledge_base"
     # - description: Clear description of what it does
     # - input_schema: JSON schema for the query parameter
-    pass
+    return ToolDefinition(
+        name="search_knowledge_base",
+        description=(
+            "Search the knowledge base for chunks relevant to a query. "
+            "Returns up to k formatted chunks with source attribution. "
+            "Use this to answer questions or find context about topics in your knowledge base."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query (e.g., 'How do decorators work?')"
+                },
+                "k": {
+                    "type": "integer",
+                    "description": "Number of chunks to retrieve (default: 5)",
+                    "default": 5
+                }
+            },
+            "required": ["query"]
+        }
+    )
 
 
 def search_knowledge_base(retriever: Retriever, query: str, k: int = 5) -> str:
