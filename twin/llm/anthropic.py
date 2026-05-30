@@ -74,6 +74,33 @@ class Claude(LLMProvider):
 
         return self.client.messages.create(**kwargs)
 
+    def extract_answer(self, response: dict) -> str:
+        """
+        Extract the answer text from an Anthropic Message response.
+
+        The Anthropic API returns a Message object with a content list containing
+        ContentBlock objects. This method extracts the text from the first content block.
+
+        Args:
+            response: Message response object from self.complete().
+
+        Returns:
+            The answer text from the first content block.
+
+        Raises:
+            ValueError: If response has no content or first block is not text.
+        """
+        if not hasattr(response, "content") or not response.content:
+            raise ValueError("Response has no content blocks")
+
+        first_block = response.content[0]
+        if not hasattr(first_block, "text"):
+            raise ValueError(
+                f"First content block is not text (type: {type(first_block).__name__})"
+            )
+
+        return first_block.text
+
     def list_models(self) -> list[str]:
         """
         Return the list of available Claude models.

@@ -22,6 +22,25 @@ class LLMProvider(ABC):
         pass
 
     @abstractmethod
+    def extract_answer(self, response: dict) -> str:
+        """
+        Extract the answer text from an LLM response.
+
+        This method abstracts away provider-specific response formats, allowing the
+        RAG pipeline and other consumers to be provider-agnostic.
+
+        Args:
+            response: Response object from complete().
+
+        Returns:
+            The answer text extracted from the response.
+
+        Raises:
+            ValueError: If the response format is unexpected or no text can be extracted.
+        """
+        pass
+
+    @abstractmethod
     def list_models(self) -> list[str]:
         """
         Return the available models for this provider.

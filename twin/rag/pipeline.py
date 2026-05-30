@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from twin.llm.base import LLMProvider
 from twin.query.retriever import QueryResult, Retriever
+from twin.rag.prompts import SystemPrompts
+from twin.rag.context import prepare_rag_context
 
 
 @dataclass
@@ -39,7 +41,8 @@ class RAGPipeline:
             retriever: Retriever instance for knowledge base search.
             llm: LLMProvider instance for generating answers.
         """
-        pass
+        self._retriever = retriever
+        self._llm = llm
 
     def query(self, question: str, k: int = 5) -> RAGOutput:
         """
@@ -59,7 +62,14 @@ class RAGPipeline:
         Returns:
             RAGOutput with answer, sources, and context_chunks.
         """
-        pass
+        chunks = self._retrieve_context(question, k)
+        context_text, sources = self._format_context(chunks)
+        answer = self._synthesize_answer(question, context_text)
+        return RAGOutput(
+            answer=answer,
+            sources=sources,
+            context_chunks=chunks
+        )
 
     def _retrieve_context(self, question: str, k: int) -> list[QueryResult]:
         """
@@ -72,7 +82,7 @@ class RAGPipeline:
         Returns:
             List of QueryResult ordered by relevance.
         """
-        pass
+        return self._retriever.query(question, k=k)
 
     def _format_context(self, chunks: list[QueryResult]) -> tuple[str, list[dict]]:
         """
@@ -84,7 +94,8 @@ class RAGPipeline:
         Returns:
             Tuple of (formatted_context_string, sources_list).
         """
-        pass
+        formatted = prepare_rag_context(chunks)
+        return formatted.text, formatted.sources
 
     def _synthesize_answer(
         self, question: str, context: str
@@ -99,4 +110,13 @@ class RAGPipeline:
         Returns:
             The LLM's synthesized answer.
         """
-        pass
+        # Build the user message
+        usr_message = f"Context:\n{context}\n\nQuestion: {question}"
+
+        # Call the LLM
+        messages = [{"role": "user", "content": usr_message}]
+        system = SystemPrompts.RAG_SYSTEM
+        response = self._llm.complete(messages, tools=None, system=system)
+
+        # Extract the answer using the provider-agnostic method
+        return self._llm.extract_answer(response)
