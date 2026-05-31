@@ -15,25 +15,26 @@ Stored to ~/.twin
 
 $ twin query "What did I write about the Rust ownership model?"
 ─────────────────────────────────────────────────────────────────
-Result 1  [score: 0.91]  notes/languages/rust.md › Ownership
-  "Ownership in Rust is the mechanism by which the compiler
+Result 1  [score: 0.91]  notes/languages/rust.md › Ownership\
+  "Ownership in Rust is the mechanism by which the compiler\
    tracks which variables are responsible for freeing memory..."
 ─────────────────────────────────────────────────────────────────
-```
 
 $ twin rag "What did I write about the Rust ownership model?"
-╭─ Answer ──────────────────────────────────────────────────────────╮
-│ Rust's ownership model gives each value a single owner...         │
-╰───────────────────────────────────────────────────────────────────╯
+╭─ Answer ──────────────────────────────────────────────────╮
+│ Rust's ownership model gives each value a single owner... │
+╰───────────────────────────────────────────────────────────╯
 
 Sources:
   • rust.md  Ownership
   • systems.md  Memory Safety
 
 $ twin agent "Summarize everything I know about async Rust"
-╭─ Agent Answer ────────────────────────────────────────────────────╮
-│ Based on your notes, async Rust centers on...                     │
-╰───────────────────────────────────────────────────────────────────╯
+╭─ Agent Answer ────────────────────────────────╮
+│ Based on your notes, async Rust centers on... │
+╰───────────────────────────────────────────────╯
+```
+
 
 Tool calls made: 3
 
