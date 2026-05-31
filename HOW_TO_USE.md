@@ -22,7 +22,11 @@ git clone https://github.com/BarrelDev/twin-repo
 cd twin-repo
 ```
 
-### 2. Build the Rust extension
+### 2. Run setup scripts
+
+If you don't feel like running the following commands, just clone the repo and run `setup.bat` (Windows) or `setup.sh` (Unix-based).
+
+### 3 (optional). Build the Rust extension
 
 The chunking hot path is implemented in Rust (`twin-core/`). Build it before installing Python dependencies:
 
@@ -35,7 +39,7 @@ cd ..
 
 `maturin develop` compiles the Rust crate and installs it into the current Python environment as a native extension. You only need to re-run this if you modify the Rust source.
 
-### 3. Install Python dependencies
+### 4 (optional). Install Python dependencies
 
 ```bash
 uv sync

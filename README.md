@@ -279,6 +279,8 @@ tests/
 
 ### Install
 
+If you don't feel like running the following commands, just clone the repo and run `setup.bat` (Windows) or `setup.sh` (Unix-based).
+
 ```bash
 git clone https://github.com/BarrelDev/twin
 cd twin
