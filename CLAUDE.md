@@ -2,6 +2,7 @@
 
 This file defines architectural decisions, conventions, and constraints.
 Do not override these without explicit instruction from the project author.
+Do not create extraneous documentation without cause.
 
 ---
 
