@@ -21,7 +21,23 @@ Result 1  [score: 0.91]  notes/languages/rust.md › Ownership
 ─────────────────────────────────────────────────────────────────
 ```
 
-Both commands are fully functional. RAG and agent commands are next.
+$ twin rag "What did I write about the Rust ownership model?"
+╭─ Answer ──────────────────────────────────────────────────────────╮
+│ Rust's ownership model gives each value a single owner...         │
+╰───────────────────────────────────────────────────────────────────╯
+
+Sources:
+  • rust.md  Ownership
+  • systems.md  Memory Safety
+
+$ twin agent "Summarize everything I know about async Rust"
+╭─ Agent Answer ────────────────────────────────────────────────────╮
+│ Based on your notes, async Rust centers on...                     │
+╰───────────────────────────────────────────────────────────────────╯
+
+Tool calls made: 3
+
+All four commands are fully functional.
 
 ---
 
@@ -137,21 +153,19 @@ All retrieval-core components implemented, tested, and wired into the CLI.
 
 ---
 
-### Phase 1 — Core Implemented, CLI Pending
-
-All Phase 1 Python modules are written and tested. The CLI commands (`twin rag`, `twin agent`) are the remaining integration step.
+### Phase 1 — Complete ✓
 
 | Component | File | Status |
 |---|---|---|
-| LLM provider abstraction | `llm/base.py`, `llm/anthropic.py` | ✓ Implemented |
-| Context formatter | `rag/context.py` | ✓ Implemented |
-| RAG pipeline | `rag/pipeline.py` | ✓ Implemented |
-| System prompts | `rag/prompts.py` | ✓ Implemented |
-| KB search tool + dispatch | `agent/tools.py` | ✓ Implemented |
-| Agent runtime | `agent/runtime.py` | ✓ Implemented |
-| Activity log | `agent/log.py` | ✓ Implemented |
-| CLI: `twin rag <query>` | `cli.py` | Pending |
-| CLI: `twin agent <task>` | `cli.py` | Pending |
+| LLM provider abstraction | `llm/base.py`, `llm/anthropic.py` | ✓ |
+| Context formatter | `rag/context.py` | ✓ |
+| RAG pipeline | `rag/pipeline.py` | ✓ |
+| System prompts | `rag/prompts.py` | ✓ |
+| KB search tool + dispatch | `agent/tools.py` | ✓ |
+| Agent runtime | `agent/runtime.py` | ✓ |
+| Activity log | `agent/log.py` | ✓ |
+| CLI: `twin rag <query>` | `cli.py` | ✓ |
+| CLI: `twin agent <task>` | `cli.py` | ✓ |
 
 #### Phase 1 flow
 
@@ -211,7 +225,7 @@ twin agent "task"
 ```
 twin/
   config.py               AppConfig dataclass, env-var overrides, model enums
-  cli.py                  Typer CLI (ingest, query; rag + agent pending)
+  cli.py                  Typer CLI (ingest, query, rag, agent)
   ingestion/
     parser.py             Chunking, heading extraction, frontmatter parsing
     embedder.py           sentence-transformers wrapper, prefix handling
@@ -286,28 +300,24 @@ cd ..
 # Ingest a folder of Markdown notes
 uv run python -m twin ingest ./notes
 
-# Query by semantic similarity
+# Query by semantic similarity (no API key needed)
 uv run python -m twin query "What did I write about decorators?"
+
+# RAG: synthesize a grounded answer with source attribution
+export ANTHROPIC_API_KEY="sk-ant-..."
+uv run python -m twin rag "What is the Rust ownership model?"
+
+# Agent: multi-step reasoning with iterative KB search
+uv run python -m twin agent "Summarize what I've written about Python decorators"
+
+# Agent with verbose activity log and custom iteration cap
+uv run python -m twin agent "..." --verbose --max-iter 3
 ```
 
 ### Run tests
 
 ```bash
 uv run pytest tests/ -v --cov=twin --cov-report=term-missing
-```
-
-### Phase 1 (RAG + Agent) — coming soon
-
-Once CLI integration is complete, these commands will be available:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-
-# RAG: synthesize an answer from the knowledge base with source attribution
-uv run python -m twin rag "What is the Rust ownership model?"
-
-# Agent: multi-step reasoning with iterative KB search
-uv run python -m twin agent "Summarize what I've written about Python decorators"
 ```
 
 ---

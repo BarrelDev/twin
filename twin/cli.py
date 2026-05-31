@@ -4,7 +4,9 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.progress import track
+from rich.text import Text
 
 from twin.config import AppConfig
 from twin.ingestion.embedder import build_embedder
@@ -90,6 +92,94 @@ def query(q: str = typer.Argument(..., help="Natural-language query")) -> None:
         return
 
     console.print(retriever.format_results(results))
+
+
+@app.command()
+def rag(
+    q: str = typer.Argument(..., help="Natural-language query for RAG synthesis"),
+    k: int = typer.Option(5, "--top-k", "-k", help="Number of chunks to retrieve"),
+) -> None:
+    """Synthesize an answer from retrieved context using an LLM."""
+    from twin.llm.anthropic import Claude
+    from twin.rag.pipeline import RAGPipeline
+
+    config = AppConfig.from_env()
+
+    try:
+        llm = Claude()
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1)
+
+    store = VectorStore(config.data_dir / "lancedb")
+    embedder = build_embedder(config)
+    retriever = Retriever(store, embedder)
+    pipeline = RAGPipeline(retriever, llm)
+
+    with console.status("[bold blue]Searching and synthesizing...[/bold blue]"):
+        output = pipeline.query(q, k=k)
+
+    console.print(Panel(output.answer, title="[bold green]Answer[/bold green]", border_style="green"))
+
+    if output.sources:
+        console.print("\n[bold]Sources:[/bold]")
+        for src in output.sources:
+            path = Path(src["path"]).name
+            heading = " > ".join(src["heading_path"]) if src["heading_path"] else ""
+            line = Text(f"  • {path}")
+            if heading:
+                line.append(f"  {heading}", style="dim")
+            console.print(line)
+
+
+@app.command()
+def agent(
+    task: str = typer.Argument(..., help="Task description for the agent"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full activity log"),
+    max_iterations: int = typer.Option(5, "--max-iter", help="Max tool calls before forced termination"),
+) -> None:
+    """Invoke the agent to complete a multi-step task over the knowledge base."""
+    from twin.llm.anthropic import Claude
+    from twin.agent.runtime import AgentRuntime
+    from twin.agent.tools import ToolDispatcher
+
+    config = AppConfig.from_env()
+
+    try:
+        llm = Claude()
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1)
+
+    store = VectorStore(config.data_dir / "lancedb")
+    embedder = build_embedder(config)
+    retriever = Retriever(store, embedder)
+    dispatcher = ToolDispatcher(retriever)
+    runtime = AgentRuntime(llm, dispatcher, max_iterations=max_iterations)
+
+    with console.status("[bold blue]Agent thinking...[/bold blue]"):
+        output = runtime.execute(task)
+
+    console.print(Panel(output.final_answer, title="[bold green]Agent Answer[/bold green]", border_style="green"))
+    console.print(f"\n[dim]Tool calls made: {output.tool_calls}[/dim]")
+
+    if verbose and output.activity_log:
+        console.print("\n[bold]Activity Log:[/bold]")
+        for entry in output.activity_log:
+            event = entry.get("event_type", "")
+            iteration = entry.get("iteration", 0)
+            details = entry.get("details", {})
+            if event == "tool_call":
+                console.print(
+                    f"  [cyan]iter {iteration}[/cyan] [yellow]tool_call[/yellow] "
+                    f"{details.get('tool_name', '')}({details.get('tool_input', '')})"
+                )
+            elif event == "tool_result":
+                snippet = str(details.get("result", ""))[:120]
+                console.print(f"  [cyan]iter {iteration}[/cyan] [dim]result[/dim] {snippet}...")
+            elif event == "final_answer":
+                reason = details.get("reason", "final_answer")
+                console.print(f"  [cyan]iter {iteration}[/cyan] [green]done[/green] ({reason})")
 
 
 if __name__ == "__main__":

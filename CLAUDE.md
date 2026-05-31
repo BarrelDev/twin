@@ -9,16 +9,19 @@ Do not create extraneous documentation without cause.
 ## Project Overview
 
 Twin is a local-first knowledge base with agent execution.
-This repo contains **Stage 0 only**: the retrieval core (ingest + query).
-There is no UI, no agent runtime, no API server, and no cloud dependency.
+Stage 0 (retrieval core) and Phase 1 (RAG + agent runtime) are both complete.
 
-Stage 0 goal: prove that semantic search over personal notes is good enough to build on.
-
-**The two CLI commands that define Stage 0 done:**
+**All four CLI commands are implemented and working:**
 ```
 python -m twin ingest ./notes
 python -m twin query "What did I write about X?"
+python -m twin rag "What did I write about X?"
+python -m twin agent "Summarize everything I know about X"
 ```
+
+- `ingest` / `query` — Stage 0: embed and search notes locally.
+- `rag` — Phase 1: retrieve context then synthesize a grounded answer with source attribution via the Anthropic API.
+- `agent` — Phase 1: multi-step reasoning loop with KB search tool access. Flags: `--verbose` (activity log), `--max-iter N` (default 5).
 
 ---
 
@@ -303,72 +306,32 @@ beyond what PyO3 marshals automatically. Keep the boundary narrow.
 
 ---
 
-## Current Stage: Phase 1 (In Development)
+## Current Stage: Phase 1 Complete — Ready for Phase 2
 
-Stage 0 is complete and validated. Phase 1 adds a RAG loop and a basic agent with tool access.
+Stage 0 and Phase 1 are both complete and validated.
 
-### Phase 1 Goals (In Order of Dependency)
-1. **Close the RAG loop** — Retrieved chunks are passed to an LLM that synthesizes a grounded, attributed answer.
-2. **Basic agent with tools** — A configured LLM instance that can search the knowledge base, incorporate results, and reason across multiple retrieval steps.
+### What Is Implemented
 
-### Phase 1 Architecture Additions
+**Stage 0 (complete):**
+- Markdown ingestion with idempotent SHA-256 hash tracking
+- Semantic chunking via sentence-transformers (nomic-embed-text-v1.5)
+- LanceDB vector store + SQLite metadata registry
+- `twin ingest` and `twin query` CLI commands
 
-**New Directories:**
-```
-twin/
-  llm/                   # LLM provider abstraction
-    __init__.py
-    base.py              # Abstract interface
-    anthropic.py         # Anthropic implementation
-  rag/                   # RAG pipeline
-    __init__.py
-    pipeline.py          # Retrieve → format → generate → return
-    context.py           # Chunk formatting and attribution
-    prompts.py           # System prompt definitions
-  agent/                 # Agent runtime
-    __init__.py
-    runtime.py           # Tool-using LLM loop
-    tools.py             # Tool definitions and dispatch
-    log.py               # Activity log
-```
+**Phase 1 (complete):**
+- `twin/llm/` — Abstract `LLMProvider` interface + `Claude` Anthropic implementation
+- `twin/rag/` — `RAGPipeline` (retrieve → format → generate → return), `context.py` (source attribution), `prompts.py` (system prompts)
+- `twin/agent/` — `AgentRuntime` (tool-using loop, max 5 iterations), `ToolDispatcher` (KB search tool), `AgentLog` (full activity log)
+- `twin rag <query>` and `twin agent <task>` CLI commands in `cli.py`
 
-**New CLI Commands:**
-- `twin rag <query>` — Synthesize an answer from retrieved context with source attribution.
-- `twin agent <task>` — Invoke the agent to complete a multi-step task.
+### What Is Deferred to Phase 2+
 
-**The RAG Pipeline (Four Steps):**
-1. Retrieve chunks from Stage 0 retriever
-2. Format chunks as context with source attribution
-3. Call LLM with system prompt (answer only from context, cite sources, admit uncertainty)
-4. Return synthesized answer with source list
-
-**The Agent Loop:**
-- Receives a task description
-- Decides whether and when to search the knowledge base
-- Can retrieve multiple times within a single response
-- Chains reasoning across multiple search results
-- Terminates on final answer or iteration limit (max 5 tool calls)
-
-**LLM Client Design:**
-- Thin wrapper around Anthropic API (Phase 1 only)
-- Designed as abstract interface for Phase 2 multi-provider support
-- Reads `ANTHROPIC_API_KEY` from environment at initialization
-
-### What Is Deferred from Phase 1
-
-These items are designed into Phase 1 but implementation is deferred to Phase 2+:
-- Multi-provider LLM switching (interface designed, Anthropic only in Phase 1)
-- Obsidian vault watcher (generic Markdown ingestion sufficient for Phase 1)
-- Streaming responses (improves UX but not load-bearing)
+- Multi-provider LLM switching (interface designed, Anthropic only now)
+- Obsidian vault watcher
+- Streaming responses
 - Cost tracking and token accounting
 - Agent write-back to knowledge base
 
-### Next Steps (Phase 1 Build Order)
+### Phase 2 Candidates
 
-1. Build LLM client and Anthropic implementation
-2. Build context formatter for RAG pipeline
-3. Wire RAG pipeline (retriever + formatter + LLM)
-4. Define KB search tool and dispatch logic
-5. Build agent runtime and tool-using loop
-
-Stage 2 will add: multi-provider LLM switching UI, Obsidian integration, PDF/URL ingestion, agent builder UI.
+Multi-provider LLM switching UI, Obsidian integration, PDF/URL ingestion, agent builder UI.
