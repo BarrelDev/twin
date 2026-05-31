@@ -37,7 +37,7 @@ $ twin agent "Summarize everything I know about async Rust"
 
 Tool calls made: 3
 
-All four commands are fully functional.
+All four commands are fully functional. For more information on how to use these commands, read [HOW_TO_USE.md](HOW_TO_USE.md)
 
 ---
 

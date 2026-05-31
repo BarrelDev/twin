@@ -21,6 +21,7 @@ uv.lock
 # misc. files
 .design_docs/
 .test_db/
+.env
 
 # rust generated files
 Cargo.lock

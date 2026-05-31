@@ -247,12 +247,14 @@ class TestAgentRuntime:
         block.type = "tool_use"
         block.name = "search_kb"
         block.input = {"q": "test"}
+        block.id = "toolu_abc123"
         response = Mock(content=[block])
 
-        tool_name, tool_input = runtime._extract_tool_call(response)
+        tool_name, tool_input, tool_use_id = runtime._extract_tool_call(response)
 
         assert tool_name == "search_kb"
         assert tool_input == {"q": "test"}
+        assert tool_use_id == "toolu_abc123"
 
     def test_extract_tool_call_not_found(self, runtime: AgentRuntime) -> None:
         """Test error when extracting non-existent tool call."""
@@ -269,6 +271,7 @@ class TestAgentRuntime:
         tool_block.type = "tool_use"
         tool_block.name = "search_kb"
         tool_block.input = {"q": "test"}
+        tool_block.id = "toolu_xyz789"
 
         blocks = [
             Mock(type="text"),
@@ -277,10 +280,11 @@ class TestAgentRuntime:
         ]
         response = Mock(content=blocks)
 
-        tool_name, tool_input = runtime._extract_tool_call(response)
+        tool_name, tool_input, tool_use_id = runtime._extract_tool_call(response)
 
         assert tool_name == "search_kb"
         assert tool_input == {"q": "test"}
+        assert tool_use_id == "toolu_xyz789"
 
     def test_agent_output_includes_tool_calls_count(
         self,

@@ -6,6 +6,7 @@ with tool execution and logs activity for transparency.
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 from twin.llm.base import LLMProvider
 from twin.agent.tools import ToolDispatcher, ToolDefinition
@@ -73,7 +74,7 @@ class AgentRuntime:
         Returns:
             AgentOutput with the final answer, tool call count, and activity log.
         """
-        messages = [{"role": "user", "content": task}]
+        messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
         tool_calls_made = 0
 
         for iteration in range(self._max_iterations):
@@ -92,7 +93,7 @@ class AgentRuntime:
             # Check if response contains a tool call or final answer
             if self._has_tool_call(response):
                 # Extract tool call and execute it
-                tool_name, tool_input = self._extract_tool_call(response)
+                tool_name, tool_input, tool_use_id = self._extract_tool_call(response)
                 tool_calls_made += 1
 
                 self._log.log_tool_call(iteration, tool_name, tool_input)
@@ -102,11 +103,23 @@ class AgentRuntime:
 
                 self._log.log_tool_result(iteration, tool_result)
 
-                # Add assistant response and tool result to messages
-                messages.append({"role": "assistant", "content": response.content})
-                messages.append(
-                    {"role": "user", "content": f"Tool result: {tool_result}"}
-                )
+                # Add assistant response and tool result to messages.
+                # response.content is a list of SDK Pydantic objects; serialize
+                # them to plain dicts so maybe_transform() doesn't drop blocks.
+                messages.append({
+                    "role": "assistant",
+                    "content": self._serialize_content(response.content),
+                })
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": tool_result,
+                        }
+                    ],
+                })
             else:
                 # Final answer received
                 final_answer = self._llm.extract_answer(response)
@@ -130,7 +143,35 @@ class AgentRuntime:
             activity_log=self._log.get_log(),
         )
 
-    def _has_tool_call(self, response: dict) -> bool:
+    def _serialize_content(self, content: list[Any]) -> list[dict[str, Any]]:
+        """
+        Convert SDK response content blocks to plain dicts.
+
+        The Anthropic SDK returns Pydantic model instances (ToolUseBlock,
+        TextBlock). Passing them directly into a subsequent messages.create()
+        call can cause maybe_transform() to drop or misserialize blocks.
+        This method produces the plain-dict format the API expects.
+
+        Args:
+            content: List of SDK content block objects from a Message response.
+
+        Returns:
+            List of plain dicts safe to use as assistant message content.
+        """
+        result = []
+        for block in content:
+            if block.type == "tool_use":
+                result.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input,
+                })
+            elif block.type == "text":
+                result.append({"type": "text", "text": block.text})
+        return result
+
+    def _has_tool_call(self, response: Any) -> bool:
         """
         Check if the LLM response contains a tool call.
 
@@ -151,26 +192,22 @@ class AgentRuntime:
 
         return False
 
-    def _extract_tool_call(self, response: dict) -> tuple[str, dict]:
+    def _extract_tool_call(self, response: Any) -> tuple[str, dict, str]:
         """
-        Extract tool name and input from an LLM response.
+        Extract tool name, input, and use-id from an LLM response.
 
         Args:
             response: Response object from the LLM containing a tool call.
 
         Returns:
-            Tuple of (tool_name, tool_input_dict).
+            Tuple of (tool_name, tool_input_dict, tool_use_id).
 
         Raises:
             ValueError: If no tool call is found in the response.
         """
-        # TODO: Implement provider-specific tool call extraction
-        # For Anthropic, extract from tool_use content block
         for block in response.content:
             if hasattr(block, "type") and block.type == "tool_use":
-                tool_name = block.name
-                tool_input = block.input
-                return tool_name, tool_input
+                return block.name, block.input, block.id
 
         raise ValueError("No tool call found in response")
 

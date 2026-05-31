@@ -1,4 +1,5 @@
 import os
+from typing import Any
 from anthropic import Anthropic
 from .base import LLMProvider
 
@@ -49,8 +50,8 @@ class Claude(LLMProvider):
             self.model = self._available_models[0]
 
     def complete(
-        self, messages: list[dict], tools: list[dict] | None, system: str
-    ) -> dict:
+        self, messages: list[dict[str, Any]], tools: list[dict] | None, system: str
+    ) -> Any:
         """
         Send a conversation to Claude and return the response.
 
@@ -74,7 +75,7 @@ class Claude(LLMProvider):
 
         return self.client.messages.create(**kwargs)
 
-    def extract_answer(self, response: dict) -> str:
+    def extract_answer(self, response: Any) -> str:
         """
         Extract the answer text from an Anthropic Message response.
 

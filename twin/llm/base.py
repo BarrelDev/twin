@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Any
 
 
 class LLMProvider(ABC):
@@ -6,23 +7,25 @@ class LLMProvider(ABC):
 
     @abstractmethod
     def complete(
-        self, messages: list[dict], tools: list[dict] | None, system: str
-    ) -> dict:
+        self, messages: list[dict[str, Any]], tools: list[dict] | None, system: str
+    ) -> Any:
         """
         Send a conversation to the model and return a response.
 
         Args:
             messages: Conversation history. Each item is a dict with 'role' and 'content'.
+                      Content may be a plain string or a list of content-block dicts.
             tools: Optional list of tool definitions. Each item is a tool specification.
             system: System prompt string that guides model behavior.
 
         Returns:
-            Response dict from the model, including the message content and metadata.
+            Opaque provider response object. Pass to extract_answer() to get text,
+            or inspect directly for tool-use blocks in provider-specific code.
         """
         pass
 
     @abstractmethod
-    def extract_answer(self, response: dict) -> str:
+    def extract_answer(self, response: Any) -> str:
         """
         Extract the answer text from an LLM response.
 
