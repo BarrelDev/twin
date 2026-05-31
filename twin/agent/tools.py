@@ -102,11 +102,12 @@ def search_knowledge_base(retriever: Retriever, query: str, k: int = 5) -> str:
     Returns:
         Formatted context string with source attribution, ready for LLM processing.
     """
-    # TODO: Implement - follow these steps:
-    # 1. Call retriever.query(query, k=k)
-    # 2. Call prepare_rag_context(chunks) to format with sources
-    # 3. Return formatted.text (the context string)
-    pass
+    queries = retriever.query(query, k=k)
+    if not queries:
+        return f"No results found for query: '{query}'"
+    
+    fmt_context = prepare_rag_context(queries)
+    return fmt_context.text
 
 
 class ToolDispatcher:
@@ -119,8 +120,7 @@ class ToolDispatcher:
         Args:
             retriever: Retriever instance for KB search operations.
         """
-        # TODO: Store retriever for use in dispatch
-        pass
+        self.retriever = retriever
 
     def dispatch(self, tool_name: str, tool_input: dict) -> str:
         """
@@ -136,10 +136,15 @@ class ToolDispatcher:
         Raises:
             ValueError: If tool_name is not recognized.
         """
-        # TODO: Implement - route based on tool_name:
-        # - "search_knowledge_base": call search_knowledge_base()
-        # - Unknown: raise ValueError(f"Unknown tool: {tool_name}")
-        pass
+        match tool_name:
+            case "search_knowledge_base":
+                query = tool_input.get("query")
+                if not query:
+                    raise ValueError("search_knowledge_base requires 'query' parameter")
+                k = tool_input.get("k", 5)
+                return search_knowledge_base(self.retriever, query=query, k=k)
+            case _:
+                raise ValueError(f"Unknown tool: {tool_name}") 
 
     def get_tool_definitions(self) -> list[ToolDefinition]:
         """
@@ -149,7 +154,8 @@ class ToolDispatcher:
             List of ToolDefinition objects describing available tools.
             Passed to the LLM to tell it what it can call.
         """
-        # TODO: Implement - return a list containing:
-        # - get_kb_search_tool()
-        # - Any other tools added later
-        pass
+        return [get_kb_search_tool()]
+
+    def get_available_tool_name(self) -> list[str]:
+        """Return names of all the available tools"""
+        return [tool.name for tool in self.get_tool_definitions()]
