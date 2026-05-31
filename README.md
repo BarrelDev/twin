@@ -280,8 +280,8 @@ tests/
 ### Install
 
 ```bash
-git clone https://github.com/BarrelDev/twin-repo
-cd twin-repo
+git clone https://github.com/BarrelDev/twin
+cd twin
 
 # Install Python dependencies
 uv sync
