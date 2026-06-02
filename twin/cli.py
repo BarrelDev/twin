@@ -18,6 +18,7 @@ from twin.llm.base import LLMProvider
 from twin.query.retriever import Retriever
 from twin.storage.metadata import DocRecord, MetadataStore
 from twin.storage.vector import VectorStore
+from twin.usage import UsageLogger, format_session_summary
 
 app = typer.Typer(name="twin", help="Local-first semantic search for personal notes")
 config_app = typer.Typer(help="Manage Twin configuration and API keys")
@@ -318,6 +319,10 @@ def rag(
                 line.append(f"  {heading}", style="dim")
             console.print(line)
 
+    summary = format_session_summary(pipeline.session_records)
+    if summary:
+        console.print(f"\n[dim]{summary}[/dim]")
+
 
 @app.command()
 def agent(
@@ -380,6 +385,10 @@ def agent(
 
     console.print(f"\n[dim]Tool calls made: {tool_calls_made}[/dim]")
 
+    summary = format_session_summary(runtime.session_records)
+    if summary:
+        console.print(f"[dim]{summary}[/dim]")
+
     if verbose and activity_log:
         console.print("\n[bold]Activity Log:[/bold]")
         for entry in activity_log:
@@ -397,6 +406,56 @@ def agent(
             elif event_type == "final_answer":
                 reason = details.get("termination_reason", "final_answer")
                 console.print(f"  [cyan]iter {iteration}[/cyan] [green]done[/green] ({reason})")
+
+
+@app.command()
+def usage() -> None:
+    """Show token and cost summary by provider and day."""
+    from collections import defaultdict
+
+    config = AppConfig.from_env()
+    log = UsageLogger(config.data_dir)
+    records = log.read_all()
+
+    if not records:
+        console.print("[yellow]No usage data found.[/yellow]")
+        return
+
+    # Group by (date, provider)
+    groups: dict[tuple[str, str], dict] = defaultdict(
+        lambda: {"calls": 0, "prompt": 0, "completion": 0, "cost": 0.0, "local": False}
+    )
+    for r in records:
+        key = (r.timestamp[:10], r.provider)
+        g = groups[key]
+        g["calls"] += 1
+        g["prompt"] += r.prompt_tokens
+        g["completion"] += r.completion_tokens
+        if r.estimated_cost_usd is not None:
+            g["cost"] += r.estimated_cost_usd
+        else:
+            g["local"] = True
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Date")
+    table.add_column("Provider")
+    table.add_column("Calls", justify="right")
+    table.add_column("Prompt tokens", justify="right")
+    table.add_column("Completion tokens", justify="right")
+    table.add_column("Est. cost", justify="right")
+
+    for (date, provider), g in sorted(groups.items()):
+        cost_str = "local" if g["local"] else f"${g['cost']:.4f}"
+        table.add_row(
+            date,
+            provider,
+            str(g["calls"]),
+            f"{g['prompt']:,}",
+            f"{g['completion']:,}",
+            cost_str,
+        )
+
+    console.print(table)
 
 
 @app.command()

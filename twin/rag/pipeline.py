@@ -11,7 +11,8 @@ from twin.rag.prompts import SystemPrompts
 from twin.rag.context import prepare_rag_context
 from twin.usage import UsageLogger, UsageRecord
 
-logger = UsageLogger(Path("~/.twin").expanduser())
+_file_logger = UsageLogger(Path("~/.twin").expanduser())
+
 
 @dataclass
 class RAGOutput:
@@ -49,6 +50,12 @@ class RAGPipeline:
         """
         self._retriever = retriever
         self._llm = llm
+        self._session_records: list[UsageRecord] = []
+
+    @property
+    def session_records(self) -> list[UsageRecord]:
+        """Usage records accumulated during this pipeline session."""
+        return self._session_records
 
     async def query(self, question: str, k: int = 5) -> RAGOutput:
         """
@@ -108,6 +115,10 @@ class RAGPipeline:
         call) so the caller has them immediately. The returned async generator
         yields text tokens as they arrive from the provider.
 
+        A streaming UsageRecord (with 0 tokens) is appended to session_records
+        when the generator is fully consumed, since token counts are unavailable
+        from the streaming API.
+
         Args:
             question: The user's question or query string.
             k: Number of chunks to retrieve (default: 5).
@@ -122,10 +133,23 @@ class RAGPipeline:
         usr_message = f"Context:\n{context_text}\n\nQuestion: {question}"
         messages = [{"role": "user", "content": usr_message}]
         llm = self._llm
+        session_records = self._session_records
+        provider = getattr(self._llm, "provider_name", "unknown")
+        model_name = getattr(self._llm, "model", "unknown")
 
         async def _token_stream() -> AsyncGenerator[str, None]:
             async for token in llm.stream(messages, system=SystemPrompts.RAG_SYSTEM):
                 yield token
+            # Stream complete — log the call (token counts unavailable for streaming)
+            session_records.append(UsageRecord(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                command="rag",
+                provider=provider,
+                model=model_name,
+                prompt_tokens=0,
+                completion_tokens=0,
+                estimated_cost_usd=None,
+            ))
 
         return _token_stream(), sources
 
@@ -143,10 +167,10 @@ class RAGPipeline:
         usr_message = f"Context:\n{context}\n\nQuestion: {question}"
         messages = [{"role": "user", "content": usr_message}]
         response = await self._llm.complete(messages, tools=None, system=SystemPrompts.RAG_SYSTEM)
-        
+
         # Log usage — best-effort; skip if token counts are not available (e.g. in tests)
         try:
-            logger.log(UsageRecord(
+            record = UsageRecord(
                 timestamp=datetime.now(timezone.utc).isoformat(),
                 command="rag",
                 provider=getattr(self._llm, "provider_name", "unknown"),
@@ -156,7 +180,9 @@ class RAGPipeline:
                 estimated_cost_usd=self._llm.estimate_cost(
                     response.prompt_tokens or 0, response.completion_tokens or 0
                 ),
-            ))
+            )
+            self._session_records.append(record)
+            _file_logger.log(record)
         except (TypeError, ValueError, OSError):
             pass
 

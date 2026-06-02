@@ -6,12 +6,17 @@ with tool execution and logs activity for transparency.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from twin.llm.base import LLMProvider, LLMResponse, ToolCall
 from twin.agent.tools import ToolDispatcher
 from twin.agent.log import AgentLog
 from twin.rag.prompts import SystemPrompts
+from twin.usage import UsageLogger, UsageRecord
+
+_file_logger = UsageLogger(Path("~/.twin").expanduser())
 
 
 @dataclass
@@ -57,6 +62,53 @@ class AgentRuntime:
         self._tool_dispatcher = tool_dispatcher
         self._max_iterations = max_iterations
         self._log = AgentLog()
+        self._session_records: list[UsageRecord] = []
+
+    @property
+    def session_records(self) -> list[UsageRecord]:
+        """Usage records accumulated during this agent session."""
+        return self._session_records
+
+    def _record_complete_usage(self, response: LLMResponse, persist: bool = True) -> None:
+        """
+        Create a UsageRecord from a complete() response and accumulate it.
+
+        Args:
+            response: LLMResponse containing token counts.
+            persist: Whether to also write the record to the file log.
+        """
+        try:
+            record = UsageRecord(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                command="agent",
+                provider=getattr(self._llm, "provider_name", "unknown"),
+                model=getattr(self._llm, "model", "unknown"),
+                prompt_tokens=int(response.prompt_tokens or 0),
+                completion_tokens=int(response.completion_tokens or 0),
+                estimated_cost_usd=self._llm.estimate_cost(
+                    response.prompt_tokens or 0, response.completion_tokens or 0
+                ),
+            )
+            self._session_records.append(record)
+            if persist:
+                _file_logger.log(record)
+        except (TypeError, ValueError, OSError):
+            pass
+
+    def _record_stream_usage(self) -> None:
+        """Append a streaming UsageRecord (0 tokens) to session_records."""
+        try:
+            self._session_records.append(UsageRecord(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                command="agent",
+                provider=getattr(self._llm, "provider_name", "unknown"),
+                model=getattr(self._llm, "model", "unknown"),
+                prompt_tokens=0,
+                completion_tokens=0,
+                estimated_cost_usd=None,
+            ))
+        except (TypeError, ValueError, OSError):
+            pass
 
     async def execute(self, task: str) -> AgentOutput:
         """
@@ -86,6 +138,7 @@ class AgentRuntime:
                 system=SystemPrompts.AGENT_SYSTEM,
             )
             self._log.log_llm_response(iteration, response)
+            self._record_complete_usage(response)
 
             if self._has_tool_call(response):
                 tool_call = self._extract_tool_call(response)
@@ -165,6 +218,7 @@ class AgentRuntime:
                 system=SystemPrompts.AGENT_SYSTEM,
             )
             self._log.log_llm_response(iteration, response)
+            self._record_complete_usage(response)
 
             if self._has_tool_call(response):
                 tool_call = self._extract_tool_call(response)
@@ -210,6 +264,7 @@ class AgentRuntime:
                     system=SystemPrompts.AGENT_SYSTEM,
                 ):
                     yield {"type": "token", "text": token}
+                self._record_stream_usage()
                 yield {
                     "type": "done",
                     "tool_calls": tool_calls_made,
@@ -227,6 +282,7 @@ class AgentRuntime:
             system=SystemPrompts.AGENT_SYSTEM,
         ):
             yield {"type": "token", "text": token}
+        self._record_stream_usage()
         yield {
             "type": "done",
             "tool_calls": tool_calls_made,
