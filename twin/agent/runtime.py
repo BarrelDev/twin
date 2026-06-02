@@ -8,8 +8,8 @@ with tool execution and logs activity for transparency.
 from dataclasses import dataclass
 from typing import Any
 
-from twin.llm.base import LLMProvider
-from twin.agent.tools import ToolDispatcher, ToolDefinition
+from twin.llm.base import LLMProvider, LLMResponse, ToolCall
+from twin.agent.tools import ToolDispatcher
 from twin.agent.log import AgentLog
 from twin.rag.prompts import SystemPrompts
 
@@ -32,9 +32,9 @@ class AgentRuntime:
     """
     Orchestrates multi-step reasoning using an LLM and tool access.
 
-    The runtime executes a task by maintaining a conversation with an LLM,
-    routing tool calls through the dispatcher, and terminating when the LLM
-    returns a final answer or the iteration limit is reached.
+    The runtime maintains a conversation with an LLM, routes tool calls
+    through the dispatcher, and terminates when the LLM returns a final
+    answer or the iteration limit is reached.
     """
 
     DEFAULT_MAX_ITERATIONS = 5
@@ -51,22 +51,22 @@ class AgentRuntime:
         Args:
             llm: LLMProvider instance for generating responses.
             tool_dispatcher: ToolDispatcher for routing and executing tool calls.
-            max_iterations: Maximum number of tool calls allowed (default: 5).
+            max_iterations: Maximum number of tool call iterations (default: 5).
         """
         self._llm = llm
         self._tool_dispatcher = tool_dispatcher
         self._max_iterations = max_iterations
         self._log = AgentLog()
 
-    def execute(self, task: str) -> AgentOutput:
+    async def execute(self, task: str) -> AgentOutput:
         """
         Execute a task using the agent loop.
 
         The loop:
         1. Sends the task and conversation history to the LLM.
-        2. Checks if the response contains tool calls or a final answer.
-        3. If tools are called, executes them and adds results to the conversation.
-        4. Repeats until a final answer is returned or iteration limit is reached.
+        2. If the response contains tool calls, executes them and continues.
+        3. If the response is a final answer, returns it.
+        4. Stops after max_iterations tool calls even without a final answer.
 
         Args:
             task: The user's task description.
@@ -76,160 +76,91 @@ class AgentRuntime:
         """
         messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
         tool_calls_made = 0
+        response = LLMResponse(content="")  # sentinel; overwritten on first iteration
 
         for iteration in range(self._max_iterations):
-            # Call the LLM with current conversation state
-            tool_definitions = self._tool_dispatcher.get_tool_definitions()
-            tool_dicts = self._format_tool_definitions(tool_definitions)
-
-            response = self._llm.complete(
+            tool_defs = self._tool_dispatcher.get_tool_definitions()
+            response = await self._llm.complete(
                 messages=messages,
-                tools=tool_dicts,
+                tools=tool_defs,
                 system=SystemPrompts.AGENT_SYSTEM,
             )
-
             self._log.log_llm_response(iteration, response)
 
-            # Check if response contains a tool call or final answer
             if self._has_tool_call(response):
-                # Extract tool call and execute it
-                tool_name, tool_input, tool_use_id = self._extract_tool_call(response)
+                tool_call = self._extract_tool_call(response)
                 tool_calls_made += 1
 
-                self._log.log_tool_call(iteration, tool_name, tool_input)
-
-                # Execute the tool
-                tool_result = self._tool_dispatcher.dispatch(tool_name, tool_input)
-
+                self._log.log_tool_call(iteration, tool_call.name, tool_call.input)
+                tool_result = self._tool_dispatcher.dispatch(tool_call.name, tool_call.input)
                 self._log.log_tool_result(iteration, tool_result)
 
-                # Add assistant response and tool result to messages.
-                # response.content is a list of SDK Pydantic objects; serialize
-                # them to plain dicts so maybe_transform() doesn't drop blocks.
-                messages.append({
-                    "role": "assistant",
-                    "content": self._serialize_content(response.content),
-                })
+                # Append tool exchange in Anthropic content-block format.
+                # Non-Anthropic providers convert this in their complete() methods.
+                assistant_content: list[dict] = []
+                if response.content:
+                    assistant_content.append({"type": "text", "text": response.content})
+                for tc in response.tool_calls:
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "input": tc.input,
+                    })
+                messages.append({"role": "assistant", "content": assistant_content})
                 messages.append({
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": tool_result,
-                        }
-                    ],
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_call.id,
+                        "content": tool_result,
+                    }],
                 })
             else:
-                # Final answer received
                 final_answer = self._llm.extract_answer(response)
                 self._log.log_final_answer(iteration, final_answer)
-
                 return AgentOutput(
                     final_answer=final_answer,
                     tool_calls=tool_calls_made,
                     activity_log=self._log.get_log(),
                 )
 
-        # Max iterations reached without final answer
+        # Max iterations reached without a final answer.
         final_answer = self._llm.extract_answer(response)
         self._log.log_final_answer(
             self._max_iterations - 1, final_answer, reason="max_iterations"
         )
-
         return AgentOutput(
             final_answer=final_answer,
             tool_calls=tool_calls_made,
             activity_log=self._log.get_log(),
         )
 
-    def _serialize_content(self, content: list[Any]) -> list[dict[str, Any]]:
+    def _has_tool_call(self, response: LLMResponse) -> bool:
         """
-        Convert SDK response content blocks to plain dicts.
-
-        The Anthropic SDK returns Pydantic model instances (ToolUseBlock,
-        TextBlock). Passing them directly into a subsequent messages.create()
-        call can cause maybe_transform() to drop or misserialize blocks.
-        This method produces the plain-dict format the API expects.
+        Check whether the LLM response contains tool calls.
 
         Args:
-            content: List of SDK content block objects from a Message response.
+            response: Normalized LLMResponse from complete().
 
         Returns:
-            List of plain dicts safe to use as assistant message content.
+            True if the response requests at least one tool call.
         """
-        result = []
-        for block in content:
-            if block.type == "tool_use":
-                result.append({
-                    "type": "tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input,
-                })
-            elif block.type == "text":
-                result.append({"type": "text", "text": block.text})
-        return result
+        return bool(response.tool_calls)
 
-    def _has_tool_call(self, response: Any) -> bool:
+    def _extract_tool_call(self, response: LLMResponse) -> ToolCall:
         """
-        Check if the LLM response contains a tool call.
+        Return the first tool call from a response.
 
         Args:
-            response: Response object from the LLM.
+            response: Normalized LLMResponse containing at least one tool call.
 
         Returns:
-            True if the response contains a tool call, False otherwise.
-        """
-        # TODO: Implement provider-specific tool call detection
-        # For Anthropic, check if response has tool_use content blocks
-        if not hasattr(response, "content"):
-            return False
-
-        for block in response.content:
-            if hasattr(block, "type") and block.type == "tool_use":
-                return True
-
-        return False
-
-    def _extract_tool_call(self, response: Any) -> tuple[str, dict, str]:
-        """
-        Extract tool name, input, and use-id from an LLM response.
-
-        Args:
-            response: Response object from the LLM containing a tool call.
-
-        Returns:
-            Tuple of (tool_name, tool_input_dict, tool_use_id).
+            The first ToolCall in the response.
 
         Raises:
-            ValueError: If no tool call is found in the response.
+            ValueError: If the response contains no tool calls.
         """
-        for block in response.content:
-            if hasattr(block, "type") and block.type == "tool_use":
-                return block.name, block.input, block.id
-
-        raise ValueError("No tool call found in response")
-
-    def _format_tool_definitions(
-        self, tool_defs: list[ToolDefinition]
-    ) -> list[dict]:
-        """
-        Convert ToolDefinition objects to provider-specific format.
-
-        Args:
-            tool_defs: List of ToolDefinition objects.
-
-        Returns:
-            List of tool definition dicts in provider format (e.g., Anthropic).
-        """
-        # TODO: Make this provider-specific
-        # For now, format as Anthropic expects
-        return [
-            {
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.input_schema,
-            }
-            for tool in tool_defs
-        ]
+        if not response.tool_calls:
+            raise ValueError("No tool call found in response")
+        return response.tool_calls[0]

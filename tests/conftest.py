@@ -45,15 +45,9 @@ def mock_embedder():
 
 @pytest.fixture
 def mock_llm_provider():
-    """Mock LLMProvider returning canned responses and recording all calls made."""
-    from twin.llm.base import LLMProvider
-
-    class _MockResponse:
-        """Minimal response object that satisfies extract_answer()."""
-        def __init__(self, text: str) -> None:
-            self.content = [type("Block", (), {"text": text, "type": "text"})()]
-            self.stop_reason = "end_turn"
-            self.usage = type("Usage", (), {"input_tokens": 10, "output_tokens": 5})()
+    """Mock LLMProvider returning canned LLMResponse objects and recording all calls."""
+    from twin.llm.base import LLMProvider, LLMResponse
+    from twin.config import ModelInfo
 
     class _MockLLMProvider(LLMProvider):
         def __init__(self) -> None:
@@ -61,25 +55,25 @@ def mock_llm_provider():
             self.response_text = "Mock response"
             self.stream_chunks: list[str] = ["Mock ", "response"]
 
-        def complete(
+        async def complete(
             self,
             messages: list[dict[str, Any]],
-            tools: list[dict] | None = None,
+            tools: Any = None,
             system: str = "",
-        ) -> Any:
+        ) -> LLMResponse:
             self.calls.append({"method": "complete", "messages": messages, "tools": tools})
-            return _MockResponse(self.response_text)
+            return LLMResponse(content=self.response_text)
 
-        def extract_answer(self, response: Any) -> str:
-            return response.content[0].text
+        def extract_answer(self, response: LLMResponse) -> str:
+            return response.content or ""
 
-        def list_models(self) -> list[str]:
-            return ["mock-model"]
+        def list_models(self) -> list[ModelInfo]:
+            return [ModelInfo(model_id="mock-model", name="Mock Model", supports_tools=True)]
 
         async def stream(
             self,
             messages: list[dict[str, Any]],
-            tools: list[dict] | None = None,
+            tools: Any = None,
             system: str = "",
         ) -> AsyncIterator[str]:
             self.calls.append({"method": "stream", "messages": messages})

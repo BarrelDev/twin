@@ -18,6 +18,9 @@ dependencies = [
     "einops>=0.7",
     "anthropic>=0.102.0",
     "cryptography>=42.0",
+    "openai>=2.40.0",
+    "google-genai>=2.7.0",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]
@@ -29,6 +32,9 @@ dev = [
 
 [project.scripts]
 twin = "twin.cli:app"
+
+[tool.pytest.ini_options]
+anyio_backend = "asyncio"
 
 [tool.maturin]
 manifest-path = "twin_core/Cargo.toml"

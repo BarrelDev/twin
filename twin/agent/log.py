@@ -162,17 +162,21 @@ class AgentLog:
         """
         Check if a response contains a tool call (provider-agnostic).
 
+        Supports LLMResponse (Phase 2+, via tool_calls list) and legacy
+        Anthropic response objects used in older tests (content block scan).
+
         Args:
             response: Response object from the LLM.
 
         Returns:
             True if the response contains a tool call.
         """
-        if not hasattr(response, "content"):
+        tool_calls = getattr(response, "tool_calls", None)
+        if isinstance(tool_calls, list):
+            return bool(tool_calls)
+
+        # Legacy fallback: Anthropic SDK content blocks (pre-LLMResponse mocks).
+        content = getattr(response, "content", None)
+        if not isinstance(content, list):
             return False
-
-        for block in response.content:
-            if hasattr(block, "type") and block.type == "tool_use":
-                return True
-
-        return False
+        return any(getattr(b, "type", "") == "tool_use" for b in content)

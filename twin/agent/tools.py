@@ -2,50 +2,18 @@
 
 This module defines the tools available to the agent (e.g., KB search) and
 provides a dispatcher to route tool calls from the LLM to their implementations.
+
+ToolDefinition lives in twin.llm.base (it's an LLM-layer concept); it is
+re-exported here for the convenience of callers that import from this module.
 """
 
 from typing import Any
-from dataclasses import dataclass
 
+from twin.llm.base import ToolDefinition  # re-exported for backward compat
 from twin.query.retriever import Retriever
 from twin.rag.context import prepare_rag_context
 
-
-@dataclass
-class ToolDefinition:
-    """
-    Schema for a tool that the LLM can call.
-
-    Represents a tool definition in the format expected by the LLM provider
-    (e.g., Anthropic's tool format).
-    """
-    name: str
-    """Tool name, e.g., 'search_knowledge_base.'."""
-
-    description: str
-    """Human-readable description of what the tool does."""
-
-    input_schema: dict
-    """
-    JSON Schema for tool input parameters
-
-    Example:
-    {
-        "type": "object,
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "Search query"
-            },
-            "k": {
-                "type": "integer",
-                "description": "Number of results",
-                "default": 5
-            }
-        },
-        "required": ["query"]
-    }
-    """
+__all__ = ["ToolDefinition", "get_kb_search_tool", "search_knowledge_base", "ToolDispatcher"]
 
 
 def get_kb_search_tool() -> ToolDefinition:

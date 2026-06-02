@@ -29,8 +29,7 @@ def _build_provider(cm: ConfigManager, provider_override: str | None = None) -> 
     """
     Instantiate the active LLM provider from config.
 
-    Uses the provider specified by --provider flag, then config.json,
-    then TWIN_PROVIDER env var, then Anthropic as the default fallback.
+    Resolution order: --provider flag → config.json → TWIN_PROVIDER env → Anthropic.
 
     Args:
         cm: ConfigManager instance for key and provider resolution.
@@ -43,6 +42,10 @@ def _build_provider(cm: ConfigManager, provider_override: str | None = None) -> 
         typer.Exit: On missing key or unsupported provider (prints user-facing error).
     """
     from twin.llm.anthropic import Claude
+    from twin.llm.openai import OpenAIProvider
+    from twin.llm.gemini import GeminiProvider
+    from twin.llm.ollama import OllamaProvider
+    from twin.llm.openrouter import OpenRouterProvider
 
     if provider_override:
         try:
@@ -63,16 +66,23 @@ def _build_provider(cm: ConfigManager, provider_override: str | None = None) -> 
     model = cm.get_model(provider)
 
     try:
-        if provider == Provider.ANTHROPIC:
-            return Claude(api_key=api_key, model=model)
-
-        # Steps 2+ will expand this match with remaining providers.
-        console.print(
-            f"[red]Provider [bold]{provider.value}[/bold] is not yet available.[/red]\n"
-            f"Run [bold]twin config set-provider anthropic[/bold] to use the default provider."
-        )
-        raise typer.Exit(1)
-
+        match provider:
+            case Provider.ANTHROPIC:
+                return Claude(api_key=api_key, model=model)
+            case Provider.OPENAI:
+                return OpenAIProvider(api_key=api_key, model=model)
+            case Provider.GEMINI:
+                return GeminiProvider(api_key=api_key, model=model)
+            case Provider.OLLAMA:
+                return OllamaProvider(model=model)
+            case Provider.OPENROUTER:
+                if not model:
+                    console.print(
+                        "[red]OpenRouter requires a model. "
+                        "Run: twin config set-model <provider/model>[/red]"
+                    )
+                    raise typer.Exit(1)
+                return OpenRouterProvider(api_key=api_key, model=model)
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
@@ -173,8 +183,10 @@ def rag(
     retriever = Retriever(store, embedder)
     pipeline = RAGPipeline(retriever, llm)
 
+    import asyncio
+
     with console.status("[bold blue]Searching and synthesizing...[/bold blue]"):
-        output = pipeline.query(q, k=k)
+        output = asyncio.run(pipeline.query(q, k=k))
 
     console.print(Panel(output.answer, title="[bold green]Answer[/bold green]", border_style="green"))
 
@@ -210,8 +222,10 @@ def agent(
     dispatcher = ToolDispatcher(retriever)
     runtime = AgentRuntime(llm, dispatcher, max_iterations=max_iterations)
 
+    import asyncio
+
     with console.status("[bold blue]Agent thinking...[/bold blue]"):
-        output = runtime.execute(task)
+        output = asyncio.run(runtime.execute(task))
 
     console.print(Panel(output.final_answer, title="[bold green]Agent Answer[/bold green]", border_style="green"))
     console.print(f"\n[dim]Tool calls made: {output.tool_calls}[/dim]")

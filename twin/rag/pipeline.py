@@ -22,15 +22,16 @@ class RAGOutput:
     """
 
     context_chunks: list[QueryResult]
-    """The retrieved chunks that were used as context."""
+    """The retrieved chunks used as context."""
 
 
 class RAGPipeline:
     """
     Orchestrates the RAG pipeline: retrieve → format → generate → return.
 
-    The pipeline takes a user query, retrieves relevant chunks from the knowledge
-    base, formats them as context, and synthesizes an answer using an LLM.
+    The pipeline takes a user query, retrieves relevant chunks from the
+    knowledge base, formats them as context, and synthesizes an answer
+    using an LLM.
     """
 
     def __init__(self, retriever: Retriever, llm: LLMProvider) -> None:
@@ -44,16 +45,15 @@ class RAGPipeline:
         self._retriever = retriever
         self._llm = llm
 
-    def query(self, question: str, k: int = 5) -> RAGOutput:
+    async def query(self, question: str, k: int = 5) -> RAGOutput:
         """
         Execute the RAG pipeline end-to-end.
 
         Steps:
         1. Retrieve top-k chunks relevant to the question.
         2. Format chunks as context with source attribution.
-        3. Call LLM with question and context.
-        4. Extract sources from retrieved chunks.
-        5. Return synthesized answer with sources.
+        3. Call LLM to synthesize an answer.
+        4. Return the answer with sources and context chunks.
 
         Args:
             question: The user's question or query string.
@@ -64,12 +64,8 @@ class RAGPipeline:
         """
         chunks = self._retrieve_context(question, k)
         context_text, sources = self._format_context(chunks)
-        answer = self._synthesize_answer(question, context_text)
-        return RAGOutput(
-            answer=answer,
-            sources=sources,
-            context_chunks=chunks
-        )
+        answer = await self._synthesize_answer(question, context_text)
+        return RAGOutput(answer=answer, sources=sources, context_chunks=chunks)
 
     def _retrieve_context(self, question: str, k: int) -> list[QueryResult]:
         """
@@ -86,7 +82,7 @@ class RAGPipeline:
 
     def _format_context(self, chunks: list[QueryResult]) -> tuple[str, list[dict]]:
         """
-        Format chunks as context and extract sources.
+        Format chunks as context and extract deduplicated sources.
 
         Args:
             chunks: List of retrieved QueryResult.
@@ -97,9 +93,7 @@ class RAGPipeline:
         formatted = prepare_rag_context(chunks)
         return formatted.text, formatted.sources
 
-    def _synthesize_answer(
-        self, question: str, context: str
-    ) -> str:
+    async def _synthesize_answer(self, question: str, context: str) -> str:
         """
         Call the LLM to synthesize an answer from context.
 
@@ -108,15 +102,9 @@ class RAGPipeline:
             context: Formatted context with attributed chunks.
 
         Returns:
-            The LLM's synthesized answer.
+            The LLM's synthesized answer as a string.
         """
-        # Build the user message
         usr_message = f"Context:\n{context}\n\nQuestion: {question}"
-
-        # Call the LLM
         messages = [{"role": "user", "content": usr_message}]
-        system = SystemPrompts.RAG_SYSTEM
-        response = self._llm.complete(messages, tools=None, system=system)
-
-        # Extract the answer using the provider-agnostic method
+        response = await self._llm.complete(messages, tools=None, system=SystemPrompts.RAG_SYSTEM)
         return self._llm.extract_answer(response)

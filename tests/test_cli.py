@@ -2,7 +2,7 @@
 
 import hashlib
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -313,7 +313,7 @@ class TestRagCommand:
         sample_rag_output: RAGOutput,
     ) -> None:
         """The synthesized answer text appears in the output."""
-        mock_pipeline_cls.return_value.query.return_value = sample_rag_output
+        mock_pipeline_cls.return_value.query = AsyncMock(return_value=sample_rag_output)
 
         result = runner.invoke(app, ["rag", "what is ownership?"])
 
@@ -335,7 +335,7 @@ class TestRagCommand:
         sample_rag_output: RAGOutput,
     ) -> None:
         """Source filenames appear below the answer."""
-        mock_pipeline_cls.return_value.query.return_value = sample_rag_output
+        mock_pipeline_cls.return_value.query = AsyncMock(return_value=sample_rag_output)
 
         result = runner.invoke(app, ["rag", "what is ownership?"])
 
@@ -357,7 +357,7 @@ class TestRagCommand:
     ) -> None:
         """Sources section is omitted when the pipeline returns no sources."""
         output = RAGOutput(answer="Some answer.", sources=[], context_chunks=[])
-        mock_pipeline_cls.return_value.query.return_value = output
+        mock_pipeline_cls.return_value.query = AsyncMock(return_value=output)
 
         result = runner.invoke(app, ["rag", "question"])
 
@@ -379,7 +379,7 @@ class TestRagCommand:
         sample_rag_output: RAGOutput,
     ) -> None:
         """--top-k is forwarded as k= to pipeline.query()."""
-        mock_pipeline_cls.return_value.query.return_value = sample_rag_output
+        mock_pipeline_cls.return_value.query = AsyncMock(return_value=sample_rag_output)
 
         runner.invoke(app, ["rag", "question", "--top-k", "3"])
 
@@ -400,7 +400,7 @@ class TestRagCommand:
         sample_rag_output: RAGOutput,
     ) -> None:
         """RAGPipeline receives the Retriever and Claude instances."""
-        mock_pipeline_cls.return_value.query.return_value = sample_rag_output
+        mock_pipeline_cls.return_value.query = AsyncMock(return_value=sample_rag_output)
 
         runner.invoke(app, ["rag", "question"])
 
@@ -447,7 +447,7 @@ class TestAgentCommand:
         sample_agent_output: AgentOutput,
     ) -> None:
         """The agent's final answer text appears in the output."""
-        mock_runtime_cls.return_value.execute.return_value = sample_agent_output
+        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
 
         result = runner.invoke(app, ["agent", "summarize rust ownership"])
 
@@ -471,7 +471,7 @@ class TestAgentCommand:
         sample_agent_output: AgentOutput,
     ) -> None:
         """The tool call count is displayed after the answer panel."""
-        mock_runtime_cls.return_value.execute.return_value = sample_agent_output
+        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
 
         result = runner.invoke(app, ["agent", "task"])
 
@@ -495,7 +495,7 @@ class TestAgentCommand:
         sample_agent_output: AgentOutput,
     ) -> None:
         """--verbose prints the Activity Log section with tool call and final answer entries."""
-        mock_runtime_cls.return_value.execute.return_value = sample_agent_output
+        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
 
         result = runner.invoke(app, ["agent", "task", "--verbose"])
 
@@ -521,7 +521,7 @@ class TestAgentCommand:
         sample_agent_output: AgentOutput,
     ) -> None:
         """Activity log is hidden by default (no --verbose flag)."""
-        mock_runtime_cls.return_value.execute.return_value = sample_agent_output
+        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
 
         result = runner.invoke(app, ["agent", "task"])
 
@@ -545,7 +545,7 @@ class TestAgentCommand:
         sample_agent_output: AgentOutput,
     ) -> None:
         """--max-iter is forwarded as max_iterations= to AgentRuntime."""
-        mock_runtime_cls.return_value.execute.return_value = sample_agent_output
+        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
 
         runner.invoke(app, ["agent", "task", "--max-iter", "3"])
 
@@ -572,7 +572,7 @@ class TestAgentCommand:
         sample_agent_output: AgentOutput,
     ) -> None:
         """The task string is forwarded verbatim to runtime.execute()."""
-        mock_runtime_cls.return_value.execute.return_value = sample_agent_output
+        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
 
         runner.invoke(app, ["agent", "summarize everything about decorators"])
 

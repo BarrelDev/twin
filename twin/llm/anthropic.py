@@ -1,24 +1,54 @@
-import os
-from typing import Any
-from anthropic import Anthropic
-from .base import LLMProvider
+"""Anthropic Claude LLM provider."""
 
-_MAX_TOKENS = 1024
+import os
+from typing import Any, AsyncIterator
+
+from anthropic import Anthropic, AsyncAnthropic
+
+from twin.config import ModelInfo
+from twin.llm.base import LLMProvider, LLMResponse, ToolCall, ToolDefinition
+
+_MAX_TOKENS = 4096
+
+# Approximate pricing per million tokens (input, output).
+_PRICING: dict[str, tuple[float, float]] = {
+    "claude-opus-4-8": (15.0, 75.0),
+    "claude-opus-4": (15.0, 75.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-sonnet-4-5": (3.0, 15.0),
+    "claude-sonnet-4": (3.0, 15.0),
+    "claude-haiku-4-5": (0.80, 4.0),
+    "claude-3-5-haiku": (0.80, 4.0),
+    "claude-3-5-sonnet": (3.0, 15.0),
+    "claude-3-opus": (15.0, 75.0),
+    "claude-3-haiku": (0.25, 1.25),
+}
+
+
+def _lookup_price(model: str) -> tuple[float, float] | None:
+    for prefix, prices in _PRICING.items():
+        if model.startswith(prefix):
+            return prices
+    return None
 
 
 class Claude(LLMProvider):
-    """Anthropic Claude provider for the LLM client."""
+    """Anthropic Claude LLM provider.
+
+    Uses a synchronous client for one-time model discovery at initialization
+    and an async client for all subsequent LLM calls.
+    """
 
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         """
         Initialize the Claude provider.
 
         Args:
-            model: Model identifier to use. If None, defaults to the first available model.
-            api_key: Anthropic API key. If None, falls back to ANTHROPIC_API_KEY env var.
+            model: Model identifier. Defaults to the first available model.
+            api_key: API key. Falls back to ANTHROPIC_API_KEY env var.
 
         Raises:
-            ValueError: If no API key is found or no models are available.
+            ValueError: If no API key is found or no models are returned by the API.
         """
         if api_key is None:
             api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -29,84 +59,137 @@ class Claude(LLMProvider):
                 "Or set ANTHROPIC_API_KEY in your environment."
             )
 
-        self.client = Anthropic(api_key=api_key)
-
-        # Fetch available models from the API
-        models_response = self.client.models.list()
-        self._available_models = [model.id for model in models_response.data]
-
-        if not self._available_models:
+        # Sync client: used once at init to discover available models.
+        sync_client = Anthropic(api_key=api_key)
+        models_page = sync_client.models.list()
+        raw_ids = [m.id for m in models_page.data]
+        if not raw_ids:
             raise ValueError("No models available from Anthropic API.")
 
-        # Use provided model or default to the first available
+        self._models = [
+            ModelInfo(model_id=m_id, name=m_id, supports_tools=True)
+            for m_id in raw_ids
+        ]
+
         if model:
-            if model not in self._available_models:
+            if model not in raw_ids:
                 raise ValueError(
                     f"Model '{model}' not available. "
-                    f"Available models: {', '.join(self._available_models)}"
+                    f"Available models: {', '.join(raw_ids)}"
                 )
             self.model = model
         else:
-            self.model = self._available_models[0]
+            self.model = raw_ids[0]
 
-    def complete(
-        self, messages: list[dict[str, Any]], tools: list[dict] | None, system: str
-    ) -> Any:
+        # Async client: used for all LLM calls.
+        self._client = AsyncAnthropic(api_key=api_key)
+
+    async def complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[ToolDefinition] | None = None,
+        system: str | None = None,
+    ) -> LLMResponse:
         """
-        Send a conversation to Claude and return the response.
+        Send a conversation to Claude and return a normalized LLMResponse.
 
         Args:
-            messages: Conversation history with 'role' and 'content' fields.
-            tools: Optional tool definitions to make available to the model.
-            system: System prompt to guide model behavior.
+            messages: Conversation history in Anthropic message format.
+            tools: Tool definitions to expose to the model.
+            system: System prompt.
 
         Returns:
-            Response dict with 'content', 'stop_reason', and other metadata from the API.
+            Normalized LLMResponse.
         """
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": _MAX_TOKENS,
-            "system": system,
+            "system": system or "",
             "messages": messages,
         }
-
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = [
+                {"name": t.name, "description": t.description, "input_schema": t.input_schema}
+                for t in tools
+            ]
+        resp = await self._client.messages.create(**kwargs)
+        return _normalize_response(resp)
 
-        return self.client.messages.create(**kwargs)
-
-    def extract_answer(self, response: Any) -> str:
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[ToolDefinition] | None = None,
+        system: str | None = None,
+    ) -> AsyncIterator[str]:
         """
-        Extract the answer text from an Anthropic Message response.
-
-        The Anthropic API returns a Message object with a content list containing
-        ContentBlock objects. This method extracts the text from the first content block.
+        Stream a Claude response token-by-token.
 
         Args:
-            response: Message response object from self.complete().
+            messages: Conversation history.
+            tools: Tool definitions.
+            system: System prompt.
+
+        Yields:
+            Text chunks as they arrive.
+        """
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": _MAX_TOKENS,
+            "system": system or "",
+            "messages": messages,
+        }
+        if tools:
+            kwargs["tools"] = [
+                {"name": t.name, "description": t.description, "input_schema": t.input_schema}
+                for t in tools
+            ]
+        async with self._client.messages.stream(**kwargs) as s:
+            async for text in s.text_stream:
+                yield text
+
+    def estimate_cost(
+        self, prompt_tokens: int, completion_tokens: int
+    ) -> float | None:
+        """
+        Estimate cost using approximate Anthropic pricing.
+
+        Args:
+            prompt_tokens: Input token count.
+            completion_tokens: Output token count.
 
         Returns:
-            The answer text from the first content block.
-
-        Raises:
-            ValueError: If response has no content or first block is not text.
+            Estimated USD cost, or None if the model is not in the pricing table.
         """
-        if not hasattr(response, "content") or not response.content:
-            raise ValueError("Response has no content blocks")
+        prices = _lookup_price(self.model)
+        if prices is None:
+            return None
+        return (prompt_tokens * prices[0] + completion_tokens * prices[1]) / 1_000_000
 
-        first_block = response.content[0]
-        if not hasattr(first_block, "text"):
-            raise ValueError(
-                f"First content block is not text (type: {type(first_block).__name__})"
-            )
-
-        return first_block.text
-
-    def list_models(self) -> list[str]:
+    def list_models(self) -> list[ModelInfo]:
         """
-        Return the list of available Claude models.
+        Return Claude models discovered at initialization.
 
         Returns:
-            List of model identifiers available through this provider.
+            List of ModelInfo for each available Claude model.
         """
-        return self._available_models
+        return self._models
+
+
+def _normalize_response(resp: Any) -> LLMResponse:
+    """Convert an Anthropic Message to a normalized LLMResponse."""
+    text: str | None = None
+    tool_calls: list[ToolCall] = []
+    for block in getattr(resp, "content", []):
+        block_type = getattr(block, "type", "")
+        if block_type == "text":
+            text = block.text
+        elif block_type == "tool_use":
+            tool_calls.append(ToolCall(id=block.id, name=block.name, input=block.input))
+    usage = getattr(resp, "usage", None)
+    return LLMResponse(
+        content=text,
+        tool_calls=tool_calls,
+        stop_reason=getattr(resp, "stop_reason", "end_turn") or "end_turn",
+        prompt_tokens=getattr(usage, "input_tokens", 0) if usage else 0,
+        completion_tokens=getattr(usage, "output_tokens", 0) if usage else 0,
+    )
