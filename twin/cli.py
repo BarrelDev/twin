@@ -4,6 +4,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.progress import track
 from rich.table import Table
@@ -174,6 +175,8 @@ def rag(
     """Synthesize an answer from retrieved context using an LLM."""
     from twin.rag.pipeline import RAGPipeline
 
+    import asyncio
+
     config = AppConfig.from_env()
     cm = ConfigManager()
     llm = _build_provider(cm, provider)
@@ -183,16 +186,20 @@ def rag(
     retriever = Retriever(store, embedder)
     pipeline = RAGPipeline(retriever, llm)
 
-    import asyncio
+    async def _stream() -> tuple[str, list[dict]]:
+        stream_gen, sources = await pipeline.query_stream(q, k=k)
+        full_text = ""
+        with Live("", console=console, refresh_per_second=20) as live:
+            async for token in stream_gen:
+                full_text += token
+                live.update(full_text)
+        return full_text, sources
 
-    with console.status("[bold blue]Searching and synthesizing...[/bold blue]"):
-        output = asyncio.run(pipeline.query(q, k=k))
+    full_text, sources = asyncio.run(_stream())
 
-    console.print(Panel(output.answer, title="[bold green]Answer[/bold green]", border_style="green"))
-
-    if output.sources:
+    if sources:
         console.print("\n[bold]Sources:[/bold]")
-        for src in output.sources:
+        for src in sources:
             path = Path(src["path"]).name
             heading = " > ".join(src["heading_path"]) if src["heading_path"] else ""
             line = Text(f"  • {path}")
@@ -212,6 +219,8 @@ def agent(
     from twin.agent.runtime import AgentRuntime
     from twin.agent.tools import ToolDispatcher
 
+    import asyncio
+
     config = AppConfig.from_env()
     cm = ConfigManager()
     llm = _build_provider(cm, provider)
@@ -222,30 +231,53 @@ def agent(
     dispatcher = ToolDispatcher(retriever)
     runtime = AgentRuntime(llm, dispatcher, max_iterations=max_iterations)
 
-    import asyncio
+    async def _run() -> tuple[str, int, list[dict]]:
+        token_parts: list[str] = []
+        tool_calls_made = 0
+        activity_log: list[dict] = []
 
-    with console.status("[bold blue]Agent thinking...[/bold blue]"):
-        output = asyncio.run(runtime.execute(task))
+        async for event in runtime.execute_stream(task):
+            if event["type"] == "tool_call":
+                snippet = str(event.get("result", ""))[:80]
+                console.print(
+                    f"  [cyan]iter {event['iteration']}[/cyan] "
+                    f"[yellow]→[/yellow] {event['name']}  "
+                    f"[dim]{snippet}…[/dim]"
+                )
+            elif event["type"] == "token":
+                token_parts.append(event["text"])
+            elif event["type"] == "done":
+                tool_calls_made = event["tool_calls"]
+                activity_log = event["activity_log"]
 
-    console.print(Panel(output.final_answer, title="[bold green]Agent Answer[/bold green]", border_style="green"))
-    console.print(f"\n[dim]Tool calls made: {output.tool_calls}[/dim]")
+        full_text = ""
+        with Live("", console=console, refresh_per_second=20) as live:
+            for part in token_parts:
+                full_text += part
+                live.update(full_text)
 
-    if verbose and output.activity_log:
+        return full_text, tool_calls_made, activity_log
+
+    full_text, tool_calls_made, activity_log = asyncio.run(_run())
+
+    console.print(f"\n[dim]Tool calls made: {tool_calls_made}[/dim]")
+
+    if verbose and activity_log:
         console.print("\n[bold]Activity Log:[/bold]")
-        for entry in output.activity_log:
-            event = entry.get("event_type", "")
+        for entry in activity_log:
+            event_type = entry.get("event_type", "")
             iteration = entry.get("iteration", 0)
             details = entry.get("details", {})
-            if event == "tool_call":
+            if event_type == "tool_call":
                 console.print(
                     f"  [cyan]iter {iteration}[/cyan] [yellow]tool_call[/yellow] "
                     f"{details.get('tool_name', '')}({details.get('tool_input', '')})"
                 )
-            elif event == "tool_result":
+            elif event_type == "tool_result":
                 snippet = str(details.get("result", ""))[:120]
                 console.print(f"  [cyan]iter {iteration}[/cyan] [dim]result[/dim] {snippet}...")
-            elif event == "final_answer":
-                reason = details.get("reason", "final_answer")
+            elif event_type == "final_answer":
+                reason = details.get("termination_reason", "final_answer")
                 console.print(f"  [cyan]iter {iteration}[/cyan] [green]done[/green] ({reason})")
 
 

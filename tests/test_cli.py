@@ -313,7 +313,11 @@ class TestRagCommand:
         sample_rag_output: RAGOutput,
     ) -> None:
         """The synthesized answer text appears in the output."""
-        mock_pipeline_cls.return_value.query = AsyncMock(return_value=sample_rag_output)
+        async def _qstream(q: str, k: int = 5):
+            async def _gen():
+                yield sample_rag_output.answer
+            return _gen(), sample_rag_output.sources
+        mock_pipeline_cls.return_value.query_stream = _qstream
 
         result = runner.invoke(app, ["rag", "what is ownership?"])
 
@@ -335,7 +339,11 @@ class TestRagCommand:
         sample_rag_output: RAGOutput,
     ) -> None:
         """Source filenames appear below the answer."""
-        mock_pipeline_cls.return_value.query = AsyncMock(return_value=sample_rag_output)
+        async def _qstream(q: str, k: int = 5):
+            async def _gen():
+                yield sample_rag_output.answer
+            return _gen(), sample_rag_output.sources
+        mock_pipeline_cls.return_value.query_stream = _qstream
 
         result = runner.invoke(app, ["rag", "what is ownership?"])
 
@@ -356,8 +364,11 @@ class TestRagCommand:
         mock_store_cls: MagicMock,
     ) -> None:
         """Sources section is omitted when the pipeline returns no sources."""
-        output = RAGOutput(answer="Some answer.", sources=[], context_chunks=[])
-        mock_pipeline_cls.return_value.query = AsyncMock(return_value=output)
+        async def _qstream(q: str, k: int = 5):
+            async def _gen():
+                yield "Some answer."
+            return _gen(), []
+        mock_pipeline_cls.return_value.query_stream = _qstream
 
         result = runner.invoke(app, ["rag", "question"])
 
@@ -378,12 +389,19 @@ class TestRagCommand:
         mock_store_cls: MagicMock,
         sample_rag_output: RAGOutput,
     ) -> None:
-        """--top-k is forwarded as k= to pipeline.query()."""
-        mock_pipeline_cls.return_value.query = AsyncMock(return_value=sample_rag_output)
+        """--top-k is forwarded as k= to pipeline.query_stream()."""
+        calls: list[dict] = []
+
+        async def _qstream(q: str, k: int = 5):
+            calls.append({"q": q, "k": k})
+            async def _gen():
+                yield sample_rag_output.answer
+            return _gen(), []
+        mock_pipeline_cls.return_value.query_stream = _qstream
 
         runner.invoke(app, ["rag", "question", "--top-k", "3"])
 
-        mock_pipeline_cls.return_value.query.assert_called_once_with("question", k=3)
+        assert calls == [{"q": "question", "k": 3}]
 
     @patch("twin.cli.VectorStore")
     @patch("twin.cli.build_embedder")
@@ -400,10 +418,15 @@ class TestRagCommand:
         sample_rag_output: RAGOutput,
     ) -> None:
         """RAGPipeline receives the Retriever and Claude instances."""
-        mock_pipeline_cls.return_value.query = AsyncMock(return_value=sample_rag_output)
+        async def _qstream(q: str, k: int = 5):
+            async def _gen():
+                yield sample_rag_output.answer
+            return _gen(), []
+        mock_pipeline_cls.return_value.query_stream = _qstream
 
-        runner.invoke(app, ["rag", "question"])
+        result = runner.invoke(app, ["rag", "question"])
 
+        assert result.exit_code == 0
         mock_pipeline_cls.assert_called_once_with(
             mock_retriever_cls.return_value,
             mock_claude_cls.return_value,
@@ -447,7 +470,11 @@ class TestAgentCommand:
         sample_agent_output: AgentOutput,
     ) -> None:
         """The agent's final answer text appears in the output."""
-        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
+        async def _estream(task: str):
+            yield {"type": "token", "text": sample_agent_output.final_answer}
+            yield {"type": "done", "tool_calls": sample_agent_output.tool_calls,
+                   "activity_log": sample_agent_output.activity_log}
+        mock_runtime_cls.return_value.execute_stream = _estream
 
         result = runner.invoke(app, ["agent", "summarize rust ownership"])
 
@@ -471,7 +498,11 @@ class TestAgentCommand:
         sample_agent_output: AgentOutput,
     ) -> None:
         """The tool call count is displayed after the answer panel."""
-        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
+        async def _estream(task: str):
+            yield {"type": "token", "text": sample_agent_output.final_answer}
+            yield {"type": "done", "tool_calls": sample_agent_output.tool_calls,
+                   "activity_log": sample_agent_output.activity_log}
+        mock_runtime_cls.return_value.execute_stream = _estream
 
         result = runner.invoke(app, ["agent", "task"])
 
@@ -495,7 +526,11 @@ class TestAgentCommand:
         sample_agent_output: AgentOutput,
     ) -> None:
         """--verbose prints the Activity Log section with tool call and final answer entries."""
-        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
+        async def _estream(task: str):
+            yield {"type": "token", "text": sample_agent_output.final_answer}
+            yield {"type": "done", "tool_calls": sample_agent_output.tool_calls,
+                   "activity_log": sample_agent_output.activity_log}
+        mock_runtime_cls.return_value.execute_stream = _estream
 
         result = runner.invoke(app, ["agent", "task", "--verbose"])
 
@@ -521,7 +556,11 @@ class TestAgentCommand:
         sample_agent_output: AgentOutput,
     ) -> None:
         """Activity log is hidden by default (no --verbose flag)."""
-        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
+        async def _estream(task: str):
+            yield {"type": "token", "text": sample_agent_output.final_answer}
+            yield {"type": "done", "tool_calls": sample_agent_output.tool_calls,
+                   "activity_log": sample_agent_output.activity_log}
+        mock_runtime_cls.return_value.execute_stream = _estream
 
         result = runner.invoke(app, ["agent", "task"])
 
@@ -545,7 +584,9 @@ class TestAgentCommand:
         sample_agent_output: AgentOutput,
     ) -> None:
         """--max-iter is forwarded as max_iterations= to AgentRuntime."""
-        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
+        async def _estream(task: str):
+            yield {"type": "done", "tool_calls": 0, "activity_log": []}
+        mock_runtime_cls.return_value.execute_stream = _estream
 
         runner.invoke(app, ["agent", "task", "--max-iter", "3"])
 
@@ -571,11 +612,14 @@ class TestAgentCommand:
         mock_store_cls: MagicMock,
         sample_agent_output: AgentOutput,
     ) -> None:
-        """The task string is forwarded verbatim to runtime.execute()."""
-        mock_runtime_cls.return_value.execute = AsyncMock(return_value=sample_agent_output)
+        """The task string is forwarded verbatim to runtime.execute_stream()."""
+        calls: list[str] = []
+
+        async def _estream(task: str):
+            calls.append(task)
+            yield {"type": "done", "tool_calls": 0, "activity_log": []}
+        mock_runtime_cls.return_value.execute_stream = _estream
 
         runner.invoke(app, ["agent", "summarize everything about decorators"])
 
-        mock_runtime_cls.return_value.execute.assert_called_once_with(
-            "summarize everything about decorators"
-        )
+        assert calls == ["summarize everything about decorators"]

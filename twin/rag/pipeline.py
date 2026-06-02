@@ -1,6 +1,7 @@
 """RAG (Retrieval-Augmented Generation) pipeline orchestration."""
 
 from dataclasses import dataclass
+from typing import AsyncGenerator
 
 from twin.llm.base import LLMProvider
 from twin.query.retriever import QueryResult, Retriever
@@ -92,6 +93,37 @@ class RAGPipeline:
         """
         formatted = prepare_rag_context(chunks)
         return formatted.text, formatted.sources
+
+    async def query_stream(
+        self, question: str, k: int = 5
+    ) -> tuple[AsyncGenerator[str, None], list[dict]]:
+        """
+        Execute the RAG pipeline with token-by-token streaming.
+
+        Sources are determined synchronously during retrieval (before the LLM
+        call) so the caller has them immediately. The returned async generator
+        yields text tokens as they arrive from the provider.
+
+        Args:
+            question: The user's question or query string.
+            k: Number of chunks to retrieve (default: 5).
+
+        Returns:
+            Tuple of (token_stream, sources) where token_stream is an async
+            generator yielding text chunks and sources is the deduplicated
+            list of source attribution dicts.
+        """
+        chunks = self._retrieve_context(question, k)
+        context_text, sources = self._format_context(chunks)
+        usr_message = f"Context:\n{context_text}\n\nQuestion: {question}"
+        messages = [{"role": "user", "content": usr_message}]
+        llm = self._llm
+
+        async def _token_stream() -> AsyncGenerator[str, None]:
+            async for token in llm.stream(messages, system=SystemPrompts.RAG_SYSTEM):
+                yield token
+
+        return _token_stream(), sources
 
     async def _synthesize_answer(self, question: str, context: str) -> str:
         """
