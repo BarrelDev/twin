@@ -1,11 +1,10 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from lancedb import connect, table
 from lancedb.pydantic import LanceModel, Vector
-
-from twin.ingestion.parser import Chunk
 
 TABLE_NAME = "chunks"
 EMBEDDING_DIM = 768
@@ -17,8 +16,10 @@ class ChunkRecord(LanceModel):
     text: str
     embedding: Vector(dim=EMBEDDING_DIM)
     source_path: str
-    heading_path: str  # JSON-encoded list[str]
+    heading_path: str       # JSON-encoded list[str]
     chunk_index: int
+    link_targets: str = ""  # JSON-encoded list[str] — Obsidian wikilink note names
+    tags: str = ""          # JSON-encoded list[str] — Obsidian tags
 
 
 @dataclass
@@ -30,6 +31,8 @@ class SearchResult:
     heading_path: list[str]
     chunk_index: int
     score: float
+    link_targets: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
 
 
 class VectorStore:
@@ -49,11 +52,15 @@ class VectorStore:
 
     def write_chunks(
         self,
-        chunks: list[Chunk],  # list[Chunk] — avoid circular import
+        chunks: list[Any],  # duck-typed: Chunk, _Chunk from pdf/url/obsidian, or MockChunk
         embeddings: list[list[float]],
     ) -> None:
         """
         Persist a batch of chunks and their embeddings.
+
+        Accepts any duck-typed chunk object with chunk_id, doc_id, text,
+        source_path, heading_path, and chunk_index attributes. Optional
+        link_targets and tags attributes are stored when present.
 
         Args:
             chunks: Chunk objects to store.
@@ -62,13 +69,15 @@ class VectorStore:
         table = self._open_or_create_table()
         records = [
             ChunkRecord(
-                chunk_id=c.chunk_id, 
-                doc_id=c.doc_id, 
-                text=c.text, 
-                embedding=e, 
-                source_path=c.source_path, 
-                heading_path=json.dumps(c.heading_path), 
-                chunk_index=c.chunk_index
+                chunk_id=c.chunk_id,
+                doc_id=c.doc_id,
+                text=c.text,
+                embedding=e,
+                source_path=c.source_path,
+                heading_path=json.dumps(c.heading_path),
+                chunk_index=c.chunk_index,
+                link_targets=json.dumps(getattr(c, "link_targets", [])),
+                tags=json.dumps(getattr(c, "tags", [])),
             )
             for (c, e) in zip(chunks, embeddings)
         ]
@@ -99,8 +108,7 @@ class VectorStore:
             query = query.where(f"source_path = '{source_path}'")
         results = query.to_list()
 
-        # Convert each 
-        def toSearchResult (row: dict) -> SearchResult:
+        def toSearchResult(row: dict) -> SearchResult:
             return SearchResult(
                 chunk_id=row["chunk_id"],
                 doc_id=row["doc_id"],
@@ -109,6 +117,8 @@ class VectorStore:
                 heading_path=json.loads(row["heading_path"]),
                 chunk_index=row["chunk_index"],
                 score=row["_distance"],
+                link_targets=json.loads(row.get("link_targets") or "[]"),
+                tags=json.loads(row.get("tags") or "[]"),
             )
 
         return list(map(toSearchResult, results))

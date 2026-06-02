@@ -1,4 +1,5 @@
 import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,7 +14,6 @@ from rich.text import Text
 from twin.config import AppConfig, Provider
 from twin.config_manager import ConfigManager
 from twin.ingestion.embedder import build_embedder
-from twin.ingestion.parser import parse_file
 from twin.llm.base import LLMProvider
 from twin.query.retriever import Retriever
 from twin.storage.metadata import DocRecord, MetadataStore
@@ -223,6 +223,8 @@ def ingest(
     meta = MetadataStore(config.data_dir / "meta.db")
     embedder = build_embedder(config)
 
+    from twin.ingestion.obsidian import parse_obsidian_file
+
     skipped = ingested = total_chunks = 0
 
     for md_file in track(md_files, description="Ingesting..."):
@@ -231,7 +233,7 @@ def ingest(
             skipped += 1
             continue
 
-        chunks = parse_file(md_file)
+        chunks, obsidian_meta = parse_obsidian_file(md_file, config)
         if not chunks:
             continue
 
@@ -245,6 +247,7 @@ def ingest(
             ingest_timestamp=datetime.now(timezone.utc).isoformat(),
             chunk_count=len(chunks),
             embedding_model=config.embed_model.value,
+            frontmatter_json=json.dumps(obsidian_meta["frontmatter"]),
         ))
 
         ingested += 1

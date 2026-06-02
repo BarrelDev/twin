@@ -119,7 +119,7 @@ class TestIngestCommand:
     @patch("twin.cli.VectorStore")
     @patch("twin.cli.MetadataStore")
     @patch("twin.cli.build_embedder")
-    @patch("twin.cli.parse_file")
+    @patch("twin.ingestion.obsidian.parse_obsidian_file")
     def test_ingests_new_files(
         self,
         mock_parse_file: MagicMock,
@@ -132,7 +132,7 @@ class TestIngestCommand:
         (tmp_path / "note.md").write_text("# Hello\n\nContent here.")
 
         chunks = [_mock_chunk("doc1"), _mock_chunk("doc1")]
-        mock_parse_file.return_value = chunks
+        mock_parse_file.return_value = (chunks, {"link_targets": [], "tags": [], "frontmatter": {}})
         mock_build_embedder.return_value.embed_batch.return_value = [[0.1] * 768] * 2
         mock_meta_cls.return_value.get_hash.return_value = None  # no prior hash
 
@@ -167,7 +167,7 @@ class TestIngestCommand:
     @patch("twin.cli.VectorStore")
     @patch("twin.cli.MetadataStore")
     @patch("twin.cli.build_embedder")
-    @patch("twin.cli.parse_file")
+    @patch("twin.ingestion.obsidian.parse_obsidian_file")
     def test_reingest_changed_file(
         self,
         mock_parse_file: MagicMock,
@@ -178,7 +178,7 @@ class TestIngestCommand:
     ) -> None:
         """A file with a different hash is re-ingested, not skipped."""
         (tmp_path / "note.md").write_text("# Updated\n\nNew content.")
-        mock_parse_file.return_value = [_mock_chunk("doc1")]
+        mock_parse_file.return_value = ([_mock_chunk("doc1")], {"link_targets": [], "tags": [], "frontmatter": {}})
         mock_build_embedder.return_value.embed_batch.return_value = [[0.1] * 768]
         mock_meta_cls.return_value.get_hash.return_value = "stale_hash_abc"  # differs
 
@@ -191,7 +191,7 @@ class TestIngestCommand:
     @patch("twin.cli.VectorStore")
     @patch("twin.cli.MetadataStore")
     @patch("twin.cli.build_embedder")
-    @patch("twin.cli.parse_file")
+    @patch("twin.ingestion.obsidian.parse_obsidian_file")
     def test_multiple_files_ingested_separately(
         self,
         mock_parse_file: MagicMock,
@@ -203,7 +203,7 @@ class TestIngestCommand:
         """Each .md file is parsed and written independently."""
         (tmp_path / "a.md").write_text("# A\n\nContent A.")
         (tmp_path / "b.md").write_text("# B\n\nContent B.")
-        mock_parse_file.return_value = [_mock_chunk("doc1")]
+        mock_parse_file.return_value = ([_mock_chunk("doc1")], {"link_targets": [], "tags": [], "frontmatter": {}})
         mock_build_embedder.return_value.embed_batch.return_value = [[0.1] * 768]
         mock_meta_cls.return_value.get_hash.return_value = None
 

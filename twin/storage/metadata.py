@@ -10,6 +10,7 @@ class DocRecord(SQLModel, table=True):
     ingest_timestamp: str
     chunk_count:      int
     embedding_model:  str
+    frontmatter_json: str = Field(default="")
 
 
 class MetadataStore:
