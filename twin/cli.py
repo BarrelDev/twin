@@ -91,10 +91,118 @@ def _build_provider(cm: ConfigManager, provider_override: str | None = None) -> 
 
 # ── Core commands ────────────────────────────────────────────────────────────
 
+def _ingest_url_content(url: str, config: AppConfig) -> None:
+    """
+    Fetch, chunk, embed, and store a URL in the knowledge base.
+
+    Args:
+        url: HTTP or HTTPS URL to ingest.
+        config: Runtime AppConfig.
+    """
+    from twin.ingestion.url import ingest_url
+
+    store = VectorStore(config.data_dir / "lancedb")
+    meta = MetadataStore(config.data_dir / "meta.db")
+    embedder = build_embedder(config)
+
+    try:
+        chunks, content_hash = ingest_url(url, config)
+    except (ImportError, ValueError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1)
+
+    if meta.get_hash(url) == content_hash:
+        console.print("[yellow]URL content unchanged, skipping.[/yellow]")
+        return
+
+    if not chunks:
+        console.print("[yellow]No extractable content found at URL.[/yellow]")
+        return
+
+    embeddings = embedder.embed_batch([c.text for c in chunks])
+    store.write_chunks(chunks, embeddings)
+    meta.upsert_doc(DocRecord(
+        doc_id=chunks[0].doc_id,
+        source_path=url,
+        file_hash=content_hash,
+        ingest_timestamp=datetime.now(timezone.utc).isoformat(),
+        chunk_count=len(chunks),
+        embedding_model=config.embed_model.value,
+    ))
+    console.print(
+        f"[green]Done.[/green] Ingested URL ([bold]{len(chunks)}[/bold] chunks)."
+    )
+
+
+def _ingest_pdf_file(path: Path, config: AppConfig) -> None:
+    """
+    Parse, embed, and store a PDF file in the knowledge base.
+
+    Args:
+        path: Path to the PDF file.
+        config: Runtime AppConfig.
+    """
+    from twin.ingestion.pdf import parse_pdf
+
+    if not path.exists():
+        console.print(f"[red]Error:[/red] {path} does not exist")
+        raise typer.Exit(1)
+
+    store = VectorStore(config.data_dir / "lancedb")
+    meta = MetadataStore(config.data_dir / "meta.db")
+    embedder = build_embedder(config)
+
+    file_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    if meta.get_hash(str(path)) == file_hash:
+        console.print("[yellow]PDF unchanged, skipping.[/yellow]")
+        return
+
+    try:
+        chunks = parse_pdf(path, config)
+    except ImportError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1)
+
+    if not chunks:
+        console.print("[yellow]No extractable content in PDF.[/yellow]")
+        return
+
+    embeddings = embedder.embed_batch([c.text for c in chunks])
+    store.write_chunks(chunks, embeddings)
+    meta.upsert_doc(DocRecord(
+        doc_id=chunks[0].doc_id,
+        source_path=str(path),
+        file_hash=file_hash,
+        ingest_timestamp=datetime.now(timezone.utc).isoformat(),
+        chunk_count=len(chunks),
+        embedding_model=config.embed_model.value,
+    ))
+    console.print(
+        f"[green]Done.[/green] Ingested [bold]{path.name}[/bold] "
+        f"([bold]{len(chunks)}[/bold] chunks)."
+    )
+
+
 @app.command()
-def ingest(path: str = typer.Argument(..., help="Path to notes folder")) -> None:
-    """Ingest a folder of Markdown notes into the knowledge base."""
+def ingest(
+    path: str = typer.Argument(..., help="Path to notes folder, file (.md/.pdf), or URL"),
+    type_: str | None = typer.Option(None, "--type", help="Force format: url, pdf, or md"),
+) -> None:
+    """Ingest Markdown files, a PDF, or a URL into the knowledge base."""
     config = AppConfig.from_env()
+
+    is_url = path.startswith(("http://", "https://")) or type_ == "url"
+    is_pdf = not is_url and (path.endswith(".pdf") or type_ == "pdf")
+
+    if is_url:
+        _ingest_url_content(path, config)
+        return
+
+    if is_pdf:
+        _ingest_pdf_file(Path(path), config)
+        return
+
+    # Existing Markdown directory path
     notes_dir = Path(path)
 
     if not notes_dir.exists():
