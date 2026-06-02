@@ -14,6 +14,23 @@ class EmbeddingModel(str, Enum):
     NOMIC = "nomic-ai/nomic-embed-text-v1.5"
 
 
+class Provider(str, Enum):
+    ANTHROPIC = "anthropic"
+    OPENAI = "openai"
+    GEMINI = "gemini"
+    OLLAMA = "ollama"
+    OPENROUTER = "openrouter"
+
+
+@dataclass
+class ModelInfo:
+    """Metadata about a model available from a provider."""
+
+    model_id: str
+    name: str
+    supports_tools: bool
+
+
 @dataclass
 class AppConfig:
     """Runtime configuration loaded from environment variables."""
@@ -34,17 +51,27 @@ class AppConfig:
         """
         Load configuration from environment variables.
 
-        Falls back to sensible defaults when variables are absent.
+        Reads TWIN_* variables, falling back to legacy SECONDBRAIN_* names,
+        then to hardcoded defaults.
 
         Returns:
             AppConfig populated from environment.
         """
+        def _get(twin_key: str, legacy_key: str, default: str) -> str:
+            return (
+                os.environ.get(twin_key)
+                or os.environ.get(legacy_key)
+                or default
+            )
+
         return cls(
-            data_dir=Path(os.environ.get("SECONDBRAIN_DATA_DIR", _DEFAULT_DATA_DIR)),
-            embed_model=EmbeddingModel(
-                os.environ.get("SECONDBRAIN_EMBED_MODEL", EmbeddingModel.NOMIC.value)
+            data_dir=Path(
+                _get("TWIN_DATA_DIR", "SECONDBRAIN_DATA_DIR", _DEFAULT_DATA_DIR)
             ),
-            chunk_tokens=int(os.environ.get("SECONDBRAIN_CHUNK_TOKENS", "512")),
-            overlap_tokens=int(os.environ.get("SECONDBRAIN_OVERLAP", "64")),
-            top_k=int(os.environ.get("SECONDBRAIN_TOP_K", "5")),
+            embed_model=EmbeddingModel(
+                _get("TWIN_EMBED_MODEL", "SECONDBRAIN_EMBED_MODEL", EmbeddingModel.NOMIC.value)
+            ),
+            chunk_tokens=int(_get("TWIN_CHUNK_TOKENS", "SECONDBRAIN_CHUNK_TOKENS", "512")),
+            overlap_tokens=int(_get("TWIN_OVERLAP", "SECONDBRAIN_OVERLAP", "64")),
+            top_k=int(_get("TWIN_TOP_K", "SECONDBRAIN_TOP_K", "5")),
         )

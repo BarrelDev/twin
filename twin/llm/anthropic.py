@@ -9,24 +9,24 @@ _MAX_TOKENS = 1024
 class Claude(LLMProvider):
     """Anthropic Claude provider for the LLM client."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
         """
         Initialize the Claude provider.
 
-        Reads ANTHROPIC_API_KEY from environment. Raises ValueError if missing.
-        Fetches available models from the Anthropic API at initialization.
-
         Args:
             model: Model identifier to use. If None, defaults to the first available model.
+            api_key: Anthropic API key. If None, falls back to ANTHROPIC_API_KEY env var.
 
         Raises:
-            ValueError: If ANTHROPIC_API_KEY is not set or no models are available.
+            ValueError: If no API key is found or no models are available.
         """
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key is None:
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError(
-                "ANTHROPIC_API_KEY environment variable is not set. "
-                "Please set it before using the Claude provider."
+                "No Anthropic API key found.\n"
+                "Run: twin config set-key\n"
+                "Or set ANTHROPIC_API_KEY in your environment."
             )
 
         self.client = Anthropic(api_key=api_key)

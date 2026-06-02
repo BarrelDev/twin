@@ -16,6 +16,13 @@ from twin.rag.pipeline import RAGOutput
 runner = CliRunner()
 
 
+# Ensure ConfigManager.resolve_api_key() succeeds in all CLI tests by default.
+# Tests that specifically test the missing-key path must clear this via monkeypatch.
+@pytest.fixture(autouse=True)
+def _api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-for-cli-tests")
+
+
 # ──────────────────────────────────────────────
 # Shared fixtures
 # ──────────────────────────────────────────────

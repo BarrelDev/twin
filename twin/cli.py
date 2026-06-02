@@ -6,18 +6,79 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import track
+from rich.table import Table
 from rich.text import Text
 
-from twin.config import AppConfig
+from twin.config import AppConfig, Provider
+from twin.config_manager import ConfigManager
 from twin.ingestion.embedder import build_embedder
 from twin.ingestion.parser import parse_file
+from twin.llm.base import LLMProvider
 from twin.query.retriever import Retriever
 from twin.storage.metadata import DocRecord, MetadataStore
 from twin.storage.vector import VectorStore
 
 app = typer.Typer(name="twin", help="Local-first semantic search for personal notes")
+config_app = typer.Typer(help="Manage Twin configuration and API keys")
+app.add_typer(config_app, name="config")
+
 console = Console()
 
+
+def _build_provider(cm: ConfigManager, provider_override: str | None = None) -> LLMProvider:
+    """
+    Instantiate the active LLM provider from config.
+
+    Uses the provider specified by --provider flag, then config.json,
+    then TWIN_PROVIDER env var, then Anthropic as the default fallback.
+
+    Args:
+        cm: ConfigManager instance for key and provider resolution.
+        provider_override: Optional provider name from a CLI --provider flag.
+
+    Returns:
+        Instantiated LLMProvider ready to use.
+
+    Raises:
+        typer.Exit: On missing key or unsupported provider (prints user-facing error).
+    """
+    from twin.llm.anthropic import Claude
+
+    if provider_override:
+        try:
+            provider = Provider(provider_override.lower())
+        except ValueError:
+            valid = ", ".join(p.value for p in Provider)
+            console.print(f"[red]Unknown provider: {provider_override}. Valid: {valid}[/red]")
+            raise typer.Exit(1)
+    else:
+        provider = cm.get_active_provider()
+
+    try:
+        api_key = cm.resolve_api_key(provider)
+    except KeyError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+    model = cm.get_model(provider)
+
+    try:
+        if provider == Provider.ANTHROPIC:
+            return Claude(api_key=api_key, model=model)
+
+        # Steps 2+ will expand this match with remaining providers.
+        console.print(
+            f"[red]Provider [bold]{provider.value}[/bold] is not yet available.[/red]\n"
+            f"Run [bold]twin config set-provider anthropic[/bold] to use the default provider."
+        )
+        raise typer.Exit(1)
+
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
+
+# ── Core commands ────────────────────────────────────────────────────────────
 
 @app.command()
 def ingest(path: str = typer.Argument(..., help="Path to notes folder")) -> None:
@@ -98,18 +159,14 @@ def query(q: str = typer.Argument(..., help="Natural-language query")) -> None:
 def rag(
     q: str = typer.Argument(..., help="Natural-language query for RAG synthesis"),
     k: int = typer.Option(5, "--top-k", "-k", help="Number of chunks to retrieve"),
+    provider: str | None = typer.Option(None, "--provider", "-p", help="LLM provider override"),
 ) -> None:
     """Synthesize an answer from retrieved context using an LLM."""
-    from twin.llm.anthropic import Claude
     from twin.rag.pipeline import RAGPipeline
 
     config = AppConfig.from_env()
-
-    try:
-        llm = Claude()
-    except ValueError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(1)
+    cm = ConfigManager()
+    llm = _build_provider(cm, provider)
 
     store = VectorStore(config.data_dir / "lancedb")
     embedder = build_embedder(config)
@@ -137,19 +194,15 @@ def agent(
     task: str = typer.Argument(..., help="Task description for the agent"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full activity log"),
     max_iterations: int = typer.Option(5, "--max-iter", help="Max tool calls before forced termination"),
+    provider: str | None = typer.Option(None, "--provider", "-p", help="LLM provider override"),
 ) -> None:
     """Invoke the agent to complete a multi-step task over the knowledge base."""
-    from twin.llm.anthropic import Claude
     from twin.agent.runtime import AgentRuntime
     from twin.agent.tools import ToolDispatcher
 
     config = AppConfig.from_env()
-
-    try:
-        llm = Claude()
-    except ValueError as exc:
-        console.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(1)
+    cm = ConfigManager()
+    llm = _build_provider(cm, provider)
 
     store = VectorStore(config.data_dir / "lancedb")
     embedder = build_embedder(config)
@@ -180,6 +233,124 @@ def agent(
             elif event == "final_answer":
                 reason = details.get("reason", "final_answer")
                 console.print(f"  [cyan]iter {iteration}[/cyan] [green]done[/green] ({reason})")
+
+
+# ── Config subcommands ───────────────────────────────────────────────────────
+
+@config_app.command("set-key")
+def config_set_key() -> None:
+    """Interactively set an API key for a provider (key is never echoed)."""
+    import getpass
+
+    providers = [p.value for p in Provider if p != Provider.OLLAMA]
+    console.print("[bold]Providers:[/bold] " + ", ".join(providers))
+
+    provider_str = typer.prompt("Provider")
+    try:
+        provider = Provider(provider_str.lower())
+    except ValueError:
+        console.print(f"[red]Unknown provider: {provider_str}[/red]")
+        raise typer.Exit(1)
+
+    if provider == Provider.OLLAMA:
+        console.print("[yellow]Ollama runs locally and requires no API key.[/yellow]")
+        raise typer.Exit(0)
+
+    api_key = getpass.getpass(f"API key for {provider.value}: ")
+    if not api_key.strip():
+        console.print("[red]Empty key not accepted.[/red]")
+        raise typer.Exit(1)
+
+    cm = ConfigManager()
+    cm.set_key(provider, api_key.strip())
+    console.print(f"[green]✓[/green] Key stored for [bold]{provider.value}[/bold].")
+
+
+@config_app.command("remove-key")
+def config_remove_key(
+    provider: str = typer.Argument(..., help="Provider name (e.g. openai)"),
+) -> None:
+    """Remove a provider's API key from the keychain."""
+    try:
+        p = Provider(provider.lower())
+    except ValueError:
+        console.print(f"[red]Unknown provider: {provider}[/red]")
+        raise typer.Exit(1)
+
+    cm = ConfigManager()
+    cm.remove_key(p)
+    console.print(f"[green]✓[/green] Key removed for [bold]{p.value}[/bold].")
+
+
+@config_app.command("set-provider")
+def config_set_provider(
+    provider: str = typer.Argument(..., help="Provider to activate (e.g. openai)"),
+) -> None:
+    """Set the active LLM provider."""
+    try:
+        p = Provider(provider.lower())
+    except ValueError:
+        valid = ", ".join(v.value for v in Provider)
+        console.print(f"[red]Unknown provider: {provider}. Valid: {valid}[/red]")
+        raise typer.Exit(1)
+
+    cm = ConfigManager()
+    cm.set_active_provider(p)
+    console.print(f"[green]✓[/green] Active provider set to [bold]{p.value}[/bold].")
+
+
+@config_app.command("set-model")
+def config_set_model(
+    model: str = typer.Argument(..., help="Model identifier to use as default"),
+) -> None:
+    """Set the default model for the active provider."""
+    cm = ConfigManager()
+    provider = cm.get_active_provider()
+    cm.set_model(provider, model)
+    console.print(f"[green]✓[/green] Default model for [bold]{provider.value}[/bold] set to [bold]{model}[/bold].")
+
+
+@config_app.command("list")
+def config_list() -> None:
+    """Show current configuration. Never reveals API key values."""
+    cm = ConfigManager()
+    info = cm.list_config()
+
+    console.print(f"\n[bold]Active provider:[/bold] {info['active_provider']}")
+    if info.get("vault_path"):
+        console.print(f"[bold]Vault path:[/bold]      {info['vault_path']}")
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Provider")
+    table.add_column("Key")
+    table.add_column("Source")
+    table.add_column("Default model")
+
+    for name, details in info["providers"].items():
+        key_cell = "[green]yes[/green]" if details["key_configured"] else "[dim]no[/dim]"
+        source = details.get("key_source") or "—"
+        model = details.get("model") or "—"
+        table.add_row(name, key_cell, source, model)
+
+    console.print(table)
+
+
+@config_app.command("list-models")
+def config_list_models(
+    provider: str | None = typer.Option(None, "--provider", "-p", help="Provider to query (default: active)"),
+) -> None:
+    """List available models for the active provider."""
+    cm = ConfigManager()
+    llm = _build_provider(cm, provider)
+    models = llm.list_models()
+
+    if not models:
+        console.print("[yellow]No models returned by provider.[/yellow]")
+        return
+
+    console.print(f"\n[bold]Available models:[/bold]")
+    for m in models:
+        console.print(f"  [cyan]•[/cyan] {m}")
 
 
 if __name__ == "__main__":
