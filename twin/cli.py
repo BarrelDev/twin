@@ -339,7 +339,14 @@ def agent(
     store = VectorStore(config.data_dir / "lancedb")
     embedder = build_embedder(config)
     retriever = Retriever(store, embedder)
-    dispatcher = ToolDispatcher(retriever)
+
+    vault_writer = None
+    vault_path = cm.get_vault_path()
+    if vault_path:
+        from twin.agent.tools import VaultWriter
+        vault_writer = VaultWriter(vault_path)
+
+    dispatcher = ToolDispatcher(retriever, vault_writer=vault_writer)
     runtime = AgentRuntime(llm, dispatcher, max_iterations=max_iterations)
 
     async def _run() -> tuple[str, int, list[dict]]:
@@ -390,6 +397,72 @@ def agent(
             elif event_type == "final_answer":
                 reason = details.get("termination_reason", "final_answer")
                 console.print(f"  [cyan]iter {iteration}[/cyan] [green]done[/green] ({reason})")
+
+
+@app.command()
+def watch(
+    vault_path: str | None = typer.Argument(None, help="Path to Obsidian vault root"),
+    status: bool = typer.Option(False, "--status", help="Show watcher status and exit"),
+) -> None:
+    """Watch an Obsidian vault for changes and re-ingest modified .md files."""
+    import os
+    import time
+
+    config = AppConfig.from_env()
+    pid_file = config.data_dir / "watcher.pid"
+    log_path = config.data_dir / "watcher.log"
+
+    if status:
+        if not pid_file.exists():
+            console.print("[yellow]Watcher is not running.[/yellow]")
+            return
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 0)
+            console.print(f"[green]Watcher running.[/green] PID: {pid}")
+        except (ValueError, OSError):
+            console.print("[yellow]Watcher process not found (stale PID file).[/yellow]")
+        return
+
+    if not vault_path:
+        console.print(
+            "[red]Error:[/red] vault path required. Usage: twin watch <vault-path>"
+        )
+        raise typer.Exit(1)
+
+    vault = Path(vault_path)
+    if not vault.exists():
+        console.print(f"[red]Error:[/red] {vault_path} does not exist")
+        raise typer.Exit(1)
+
+    try:
+        from watchdog.observers import Observer
+        from twin.ingestion.obsidian import VaultWatcher
+    except ImportError:
+        console.print("[red]Error:[/red] watchdog not installed. Run: uv add watchdog")
+        raise typer.Exit(1)
+
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()))
+
+    handler = VaultWatcher(vault, config, log_path=log_path)
+    observer = Observer()
+    observer.schedule(handler, str(vault), recursive=True)
+    observer.start()
+
+    console.print(
+        f"[green]Watching[/green] {vault_path} for .md changes. "
+        f"Log: {log_path}  (Ctrl-C to stop)"
+    )
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+        observer.join()
+        pid_file.unlink(missing_ok=True)
+        console.print("\n[yellow]Watcher stopped.[/yellow]")
 
 
 # ── Config subcommands ───────────────────────────────────────────────────────

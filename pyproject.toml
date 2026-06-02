@@ -23,6 +23,7 @@ dependencies = [
     "httpx>=0.28.1",
     "pymupdf>=1.27.2.3",
     "trafilatura>=2.0.0",
+    "watchdog>=4.0",
 ]
 
 [dependency-groups]

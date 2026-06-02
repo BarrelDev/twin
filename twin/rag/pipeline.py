@@ -1,13 +1,17 @@
 """RAG (Retrieval-Augmented Generation) pipeline orchestration."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import AsyncGenerator
+from datetime import datetime, timezone
 
 from twin.llm.base import LLMProvider
 from twin.query.retriever import QueryResult, Retriever
 from twin.rag.prompts import SystemPrompts
 from twin.rag.context import prepare_rag_context
+from twin.usage import UsageLogger, UsageRecord
 
+logger = UsageLogger(Path("~/.twin").expanduser())
 
 @dataclass
 class RAGOutput:
@@ -139,4 +143,21 @@ class RAGPipeline:
         usr_message = f"Context:\n{context}\n\nQuestion: {question}"
         messages = [{"role": "user", "content": usr_message}]
         response = await self._llm.complete(messages, tools=None, system=SystemPrompts.RAG_SYSTEM)
+        
+        # Log usage — best-effort; skip if token counts are not available (e.g. in tests)
+        try:
+            logger.log(UsageRecord(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                command="rag",
+                provider=getattr(self._llm, "provider_name", "unknown"),
+                model=getattr(self._llm, "model", "unknown"),
+                prompt_tokens=int(response.prompt_tokens or 0),
+                completion_tokens=int(response.completion_tokens or 0),
+                estimated_cost_usd=self._llm.estimate_cost(
+                    response.prompt_tokens or 0, response.completion_tokens or 0
+                ),
+            ))
+        except (TypeError, ValueError, OSError):
+            pass
+
         return self._llm.extract_answer(response)

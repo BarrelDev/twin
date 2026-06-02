@@ -1,10 +1,12 @@
 """Tests for twin/ingestion/obsidian.py — Obsidian-specific Markdown parsing."""
 
+import time
 import pytest
 from pathlib import Path
 
 from twin.config import AppConfig, EmbeddingModel
-from twin.ingestion.obsidian import parse_obsidian_file, _extract_frontmatter
+from twin.ingestion.obsidian import VaultWatcher, parse_obsidian_file, _extract_frontmatter
+from twin.agent.tools import VaultWriter
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -338,3 +340,150 @@ def test_extract_frontmatter_invalid_yaml() -> None:
     content = "---\ninvalid: [unclosed\n---\n# Body\n"
     fm, body = _extract_frontmatter(content)
     assert fm == {}
+
+
+# ── VaultWriter tests ─────────────────────────────────────────────────────────
+
+def test_write_vault_note_creates_file_in_agents(tmp_vault: Path) -> None:
+    """write_vault_note creates a file inside the vault's Agents/ directory."""
+    writer = VaultWriter(tmp_vault)
+    rel_path = writer.write_vault_note("Research Summary", "Body content here.")
+    note_file = tmp_vault / rel_path
+    assert note_file.exists()
+    assert rel_path.parts[0] == "Agents"
+
+
+def test_write_vault_note_returns_relative_path(tmp_vault: Path) -> None:
+    """write_vault_note returns a path relative to the vault root."""
+    writer = VaultWriter(tmp_vault)
+    rel_path = writer.write_vault_note("Test Note", "Body.")
+    assert not rel_path.is_absolute()
+    assert rel_path.parts[0] == "Agents"
+
+
+def test_write_vault_note_frontmatter_fields(tmp_vault: Path) -> None:
+    """Written note contains all required frontmatter fields."""
+    writer = VaultWriter(tmp_vault)
+    rel_path = writer.write_vault_note("My Task", "Some content.")
+    text = (tmp_vault / rel_path).read_text(encoding="utf-8")
+    assert "generated_by: twin-agent" in text
+    assert "task: My Task" in text
+    assert "created:" in text
+    assert "twin-generated" in text
+
+
+def test_write_vault_note_includes_custom_tags(tmp_vault: Path) -> None:
+    """write_vault_note includes both user tags and the mandatory twin-generated tag."""
+    writer = VaultWriter(tmp_vault)
+    rel_path = writer.write_vault_note("Tagged", "Content.", tags=["research", "summary"])
+    text = (tmp_vault / rel_path).read_text(encoding="utf-8")
+    assert "research" in text
+    assert "summary" in text
+    assert "twin-generated" in text
+
+
+def test_write_vault_note_h1_heading_in_body(tmp_vault: Path) -> None:
+    """Written note contains an H1 heading matching the title."""
+    writer = VaultWriter(tmp_vault)
+    rel_path = writer.write_vault_note("Heading Check", "Body text.")
+    text = (tmp_vault / rel_path).read_text(encoding="utf-8")
+    assert "# Heading Check\n" in text
+    assert "Body text." in text
+
+
+def test_write_vault_note_sanitizes_traversal_title(tmp_vault: Path) -> None:
+    """A title with path-traversal characters is sanitized to a safe filename."""
+    writer = VaultWriter(tmp_vault)
+    rel_path = writer.write_vault_note("../../etc/passwd", "Content.")
+    # File must exist and be safely inside Agents/
+    note_file = tmp_vault / rel_path
+    assert note_file.exists()
+    assert rel_path.parts[0] == "Agents"
+    # The filename must not contain / or .. as separators
+    assert ".." not in rel_path.parts
+
+
+def test_write_vault_note_sanitizes_special_chars(tmp_vault: Path) -> None:
+    """Unsafe characters in title are replaced to produce a valid filename."""
+    writer = VaultWriter(tmp_vault)
+    rel_path = writer.write_vault_note('Note: A/B Test? "quoted"', "Body.")
+    assert (tmp_vault / rel_path).exists()
+    assert rel_path.parts[0] == "Agents"
+
+
+def test_write_vault_note_no_tags_still_includes_twin_generated(tmp_vault: Path) -> None:
+    """When no tags are passed, the twin-generated tag is still added."""
+    writer = VaultWriter(tmp_vault)
+    rel_path = writer.write_vault_note("Untagged", "Content.")
+    text = (tmp_vault / rel_path).read_text(encoding="utf-8")
+    assert "twin-generated" in text
+
+
+# ── VaultWatcher tests ────────────────────────────────────────────────────────
+
+class _FakeEvent:
+    """Minimal stand-in for a watchdog FileSystemEvent."""
+    def __init__(self, src_path: str, is_directory: bool = False) -> None:
+        self.src_path = src_path
+        self.is_directory = is_directory
+
+
+def test_watcher_ignores_non_md_files(tmp_vault: Path, config: AppConfig) -> None:
+    """Events for non-.md files do not trigger the ingest callback."""
+    calls: list[Path] = []
+    watcher = VaultWatcher(tmp_vault, config, ingest_callback=calls.append, debounce_seconds=0.05)
+    watcher.on_modified(_FakeEvent(str(tmp_vault / "image.png")))
+    time.sleep(0.15)
+    assert calls == []
+
+
+def test_watcher_ignores_directory_events(tmp_vault: Path, config: AppConfig) -> None:
+    """Directory-level events do not trigger the ingest callback."""
+    calls: list[Path] = []
+    watcher = VaultWatcher(tmp_vault, config, ingest_callback=calls.append, debounce_seconds=0.05)
+    watcher.on_modified(_FakeEvent(str(tmp_vault / "subdir"), is_directory=True))
+    time.sleep(0.15)
+    assert calls == []
+
+
+def test_watcher_md_file_triggers_ingest(tmp_vault: Path, config: AppConfig) -> None:
+    """A .md file modification event triggers the ingest callback after debounce."""
+    calls: list[Path] = []
+    watcher = VaultWatcher(tmp_vault, config, ingest_callback=calls.append, debounce_seconds=0.05)
+    md_path = str(tmp_vault / "note1.md")
+    watcher.on_modified(_FakeEvent(md_path))
+    time.sleep(0.15)
+    assert len(calls) == 1
+    assert calls[0] == Path(md_path)
+
+
+def test_watcher_debounce_two_rapid_events_one_ingest(tmp_vault: Path, config: AppConfig) -> None:
+    """Two rapid events for the same path produce only one ingest call."""
+    calls: list[Path] = []
+    watcher = VaultWatcher(tmp_vault, config, ingest_callback=calls.append, debounce_seconds=0.05)
+    md_path = str(tmp_vault / "note1.md")
+    watcher._schedule_ingest(md_path)
+    watcher._schedule_ingest(md_path)
+    time.sleep(0.15)
+    assert len(calls) == 1
+
+
+def test_watcher_distinct_files_each_trigger_ingest(tmp_vault: Path, config: AppConfig) -> None:
+    """Events for two different .md files each trigger a separate ingest call."""
+    calls: list[Path] = []
+    watcher = VaultWatcher(tmp_vault, config, ingest_callback=calls.append, debounce_seconds=0.05)
+    watcher.on_modified(_FakeEvent(str(tmp_vault / "note1.md")))
+    watcher.on_modified(_FakeEvent(str(tmp_vault / "note2.md")))
+    time.sleep(0.15)
+    assert len(calls) == 2
+
+
+def test_watcher_on_created_also_triggers_ingest(tmp_vault: Path, config: AppConfig) -> None:
+    """on_created fires ingest just like on_modified."""
+    calls: list[Path] = []
+    watcher = VaultWatcher(tmp_vault, config, ingest_callback=calls.append, debounce_seconds=0.05)
+    md_path = str(tmp_vault / "new_note.md")
+    watcher.on_created(_FakeEvent(md_path))
+    time.sleep(0.15)
+    assert len(calls) == 1
+    assert calls[0] == Path(md_path)
