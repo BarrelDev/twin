@@ -223,7 +223,7 @@ def ingest(
     from twin.ingestion.embedder import build_embedder
     from twin.storage.vector import VectorStore
     from twin.storage.metadata import DocRecord, MetadataStore
-    from twin.ingestion.obsidian import parse_obsidian_file
+    from twin.ingestion.obsidian import parse_obsidian_file, _frontmatter_to_json
 
     store = VectorStore(config.data_dir / "lancedb")
     meta = MetadataStore(config.data_dir / "meta.db")
@@ -251,7 +251,7 @@ def ingest(
             ingest_timestamp=datetime.now(timezone.utc).isoformat(),
             chunk_count=len(chunks),
             embedding_model=config.embed_model.value,
-            frontmatter_json=json.dumps(obsidian_meta["frontmatter"]),
+            frontmatter_json=_frontmatter_to_json(obsidian_meta["frontmatter"]),
         ))
 
         ingested += 1

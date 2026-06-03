@@ -153,13 +153,12 @@ class AgentRuntime:
                 assistant_content: list[dict] = []
                 if response.content:
                     assistant_content.append({"type": "text", "text": response.content})
-                for tc in response.tool_calls:
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": tc.id,
-                        "name": tc.name,
-                        "input": tc.input,
-                    })
+                assistant_content.append({
+                    "type": "tool_use",
+                    "id": tool_call.id,
+                    "name": tool_call.name,
+                    "input": tool_call.input,
+                })
                 messages.append({"role": "assistant", "content": assistant_content})
                 messages.append({
                     "role": "user",
@@ -239,13 +238,12 @@ class AgentRuntime:
                 assistant_content: list[dict] = []
                 if response.content:
                     assistant_content.append({"type": "text", "text": response.content})
-                for tc in response.tool_calls:
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": tc.id,
-                        "name": tc.name,
-                        "input": tc.input,
-                    })
+                assistant_content.append({
+                    "type": "tool_use",
+                    "id": tool_call.id,
+                    "name": tool_call.name,
+                    "input": tool_call.input,
+                })
                 messages.append({"role": "assistant", "content": assistant_content})
                 messages.append({
                     "role": "user",

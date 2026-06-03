@@ -1,11 +1,13 @@
 """Tests for twin/ingestion/obsidian.py — Obsidian-specific Markdown parsing."""
 
+import json
 import time
 import pytest
+from datetime import date, datetime
 from pathlib import Path
 
 from twin.config import AppConfig, EmbeddingModel
-from twin.ingestion.obsidian import VaultWatcher, parse_obsidian_file, _extract_frontmatter
+from twin.ingestion.obsidian import VaultWatcher, parse_obsidian_file, _extract_frontmatter, _frontmatter_to_json
 from twin.agent.tools import VaultWriter
 
 
@@ -340,6 +342,46 @@ def test_extract_frontmatter_invalid_yaml() -> None:
     content = "---\ninvalid: [unclosed\n---\n# Body\n"
     fm, body = _extract_frontmatter(content)
     assert fm == {}
+
+
+def test_frontmatter_to_json_with_date() -> None:
+    """_frontmatter_to_json serializes date objects to ISO format strings."""
+    frontmatter = {
+        "title": "Test Note",
+        "date": date(2025, 1, 15),
+    }
+    json_str = _frontmatter_to_json(frontmatter)
+    parsed = json.loads(json_str)
+    assert parsed["title"] == "Test Note"
+    assert parsed["date"] == "2025-01-15"
+
+
+def test_frontmatter_to_json_with_datetime() -> None:
+    """_frontmatter_to_json serializes datetime objects to ISO format strings."""
+    frontmatter = {
+        "title": "Test Note",
+        "created": datetime(2025, 1, 15, 14, 30, 45),
+    }
+    json_str = _frontmatter_to_json(frontmatter)
+    parsed = json.loads(json_str)
+    assert parsed["title"] == "Test Note"
+    assert parsed["created"] == "2025-01-15T14:30:45"
+
+
+def test_frontmatter_to_json_mixed_types() -> None:
+    """_frontmatter_to_json handles mixed simple and date types."""
+    frontmatter = {
+        "title": "Research",
+        "date": date(2025, 6, 3),
+        "tags": ["project", "twin"],
+        "count": 42,
+    }
+    json_str = _frontmatter_to_json(frontmatter)
+    parsed = json.loads(json_str)
+    assert parsed["title"] == "Research"
+    assert parsed["date"] == "2025-06-03"
+    assert parsed["tags"] == ["project", "twin"]
+    assert parsed["count"] == 42
 
 
 # ── VaultWriter tests ─────────────────────────────────────────────────────────

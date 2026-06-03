@@ -1,8 +1,10 @@
 import hashlib
+import json
 import logging
 import re
 import threading
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -26,6 +28,22 @@ try:
     _USE_RUST = True
 except ImportError:
     _USE_RUST = False
+
+def _frontmatter_to_json(frontmatter: dict) -> str:
+    """Convert frontmatter dict to JSON, handling date/datetime objects.
+
+    YAML parsing can produce datetime.date and datetime.datetime objects,
+    which json.dumps() cannot serialize by default. This encoder converts
+    them to ISO format strings.
+    """
+    class DateTimeEncoder(json.JSONEncoder):
+        def default(self, obj: Any) -> Any:
+            if isinstance(obj, (date, datetime)):
+                return obj.isoformat()
+            return super().default(obj)
+
+    return json.dumps(frontmatter, cls=DateTimeEncoder)
+
 
 # Captures the note name from [[Note Name]] and [[Note Name|Alias]]
 WIKILINK_RE = re.compile(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]')
@@ -307,7 +325,6 @@ class VaultWatcher(FileSystemEventHandler):
         Args:
             path: Path to the changed .md file.
         """
-        import json
         from datetime import datetime, timezone
 
         from twin.ingestion.embedder import build_embedder
@@ -337,6 +354,6 @@ class VaultWatcher(FileSystemEventHandler):
             ingest_timestamp=datetime.now(timezone.utc).isoformat(),
             chunk_count=len(chunks),
             embedding_model=self._config.embed_model.value,
-            frontmatter_json=json.dumps(obsidian_meta["frontmatter"]),
+            frontmatter_json=_frontmatter_to_json(obsidian_meta["frontmatter"]),
         ))
         self._logger.info("Ingested %d chunks: %s", len(chunks), path)
