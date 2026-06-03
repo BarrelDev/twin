@@ -32,10 +32,19 @@ jobs:
           maturin build --release --out dist/
 
       # Find the wheel and store its path
-      - name: Get wheel path
-        id: wheel
+      - name: Get wheel path (Unix)
+        id: wheel_unix
+        if: runner.os != 'Windows'
         shell: bash
         run: echo "path=$(realpath dist/*.whl)" >> $GITHUB_OUTPUT
+
+      - name: Get wheel path (Windows)
+        id: wheel_windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $path = (Get-Item dist\*.whl).FullName
+          echo "path=$path" >> $env:GITHUB_OUTPUT
 
       # Build PyApp with Twin bundled
       - name: Build PyApp binary
@@ -44,7 +53,7 @@ jobs:
           PYAPP_PROJECT_VERSION: ${{ github.ref_name }}
           PYAPP_PYTHON_VERSION: "3.11"
           # Points PyApp at the wheel we just built
-          PYAPP_PROJECT_PATH: ${{ steps.wheel.outputs.path }}
+          PYAPP_PROJECT_PATH: ${{ runner.os == 'Windows' && steps.wheel_windows.outputs.path || steps.wheel_unix.outputs.path }}
         run: cargo install pyapp --root pyapp-out
       - name: Rename binary (Unix)
         if: runner.os != 'Windows'
