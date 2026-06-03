@@ -30,6 +30,38 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           path: ${{ matrix.target }}
+      - uses: actions/checkout@v4.2.2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.11"
+
+      # Build the Twin wheel
+      - run: pip install maturin
+      - run: maturin build --release --out dist/
+
+      # Build PyApp with Twin bundled
+      - name: Build PyApp binary
+        env:
+          PYAPP_PROJECT_NAME: twin
+          PYAPP_PROJECT_VERSION: ${{ github.ref_name }}
+          PYAPP_PYTHON_VERSION: "3.11"
+          # Points PyApp at the wheel we just built
+          PYAPP_PROJECT_PATH: dist/
+        run: cargo install pyapp --root pyapp-out
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
+        run: cp pyapp-out/bin/pyapp ${{ matrix.target }}
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        run: copy pyapp-out\bin\pyapp.exe ${{ matrix.target }}
+        shell: cmd
+
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ matrix.target }}
 
   release:
     needs: build_binary
