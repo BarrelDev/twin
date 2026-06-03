@@ -35,7 +35,7 @@ jobs:
       - name: Get wheel path
         id: wheel
         shell: bash
-        run: echo "path=$(ls dist/*.whl | head -n 1)" >> $GITHUB_OUTPUT
+        run: echo "path=$(realpath dist/*.whl)" >> $GITHUB_OUTPUT
 
       # Build PyApp with Twin bundled
       - name: Build PyApp binary
