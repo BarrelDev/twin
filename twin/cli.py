@@ -6,18 +6,11 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.live import Live
-from rich.panel import Panel
-from rich.progress import track
 from rich.table import Table
 from rich.text import Text
 
 from twin.config import AppConfig, Provider
 from twin.config_manager import ConfigManager
-from twin.ingestion.embedder import build_embedder
-from twin.llm.base import LLMProvider
-from twin.query.retriever import Retriever
-from twin.storage.metadata import DocRecord, MetadataStore
-from twin.storage.vector import VectorStore
 from twin.usage import UsageLogger, format_session_summary
 
 app = typer.Typer(name="twin", help="Local-first semantic search for personal notes")
@@ -27,7 +20,7 @@ app.add_typer(config_app, name="config")
 console = Console()
 
 
-def _build_provider(cm: ConfigManager, provider_override: str | None = None) -> LLMProvider:
+def _build_provider(cm: ConfigManager, provider_override: str | None = None):
     """
     Instantiate the active LLM provider from config.
 
@@ -43,12 +36,6 @@ def _build_provider(cm: ConfigManager, provider_override: str | None = None) -> 
     Raises:
         typer.Exit: On missing key or unsupported provider (prints user-facing error).
     """
-    from twin.llm.anthropic import Claude
-    from twin.llm.openai import OpenAIProvider
-    from twin.llm.gemini import GeminiProvider
-    from twin.llm.ollama import OllamaProvider
-    from twin.llm.openrouter import OpenRouterProvider
-
     if provider_override:
         try:
             provider = Provider(provider_override.lower())
@@ -70,12 +57,16 @@ def _build_provider(cm: ConfigManager, provider_override: str | None = None) -> 
     try:
         match provider:
             case Provider.ANTHROPIC:
+                from twin.llm.anthropic import Claude
                 return Claude(api_key=api_key, model=model)
             case Provider.OPENAI:
+                from twin.llm.openai import OpenAIProvider
                 return OpenAIProvider(api_key=api_key, model=model)
             case Provider.GEMINI:
+                from twin.llm.gemini import GeminiProvider
                 return GeminiProvider(api_key=api_key, model=model)
             case Provider.OLLAMA:
+                from twin.llm.ollama import OllamaProvider
                 return OllamaProvider(model=model)
             case Provider.OPENROUTER:
                 if not model:
@@ -84,6 +75,7 @@ def _build_provider(cm: ConfigManager, provider_override: str | None = None) -> 
                         "Run: twin config set-model <provider/model>[/red]"
                     )
                     raise typer.Exit(1)
+                from twin.llm.openrouter import OpenRouterProvider
                 return OpenRouterProvider(api_key=api_key, model=model)
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
@@ -101,6 +93,9 @@ def _ingest_url_content(url: str, config: AppConfig) -> None:
         config: Runtime AppConfig.
     """
     from twin.ingestion.url import ingest_url
+    from twin.ingestion.embedder import build_embedder
+    from twin.storage.vector import VectorStore
+    from twin.storage.metadata import DocRecord, MetadataStore
 
     store = VectorStore(config.data_dir / "lancedb")
     meta = MetadataStore(config.data_dir / "meta.db")
@@ -144,6 +139,9 @@ def _ingest_pdf_file(path: Path, config: AppConfig) -> None:
         config: Runtime AppConfig.
     """
     from twin.ingestion.pdf import parse_pdf
+    from twin.ingestion.embedder import build_embedder
+    from twin.storage.vector import VectorStore
+    from twin.storage.metadata import DocRecord, MetadataStore
 
     if not path.exists():
         console.print(f"[red]Error:[/red] {path} does not exist")
@@ -190,6 +188,8 @@ def ingest(
     type_: str | None = typer.Option(None, "--type", help="Force format: url, pdf, or md"),
 ) -> None:
     """Ingest Markdown files, a PDF, or a URL into the knowledge base."""
+    from rich.progress import track
+
     config = AppConfig.from_env()
 
     is_url = path.startswith(("http://", "https://")) or type_ == "url"
@@ -220,11 +220,14 @@ def ingest(
         f"[bold]{len(md_files)}[/bold] files found"
     )
 
+    from twin.ingestion.embedder import build_embedder
+    from twin.storage.vector import VectorStore
+    from twin.storage.metadata import DocRecord, MetadataStore
+    from twin.ingestion.obsidian import parse_obsidian_file
+
     store = VectorStore(config.data_dir / "lancedb")
     meta = MetadataStore(config.data_dir / "meta.db")
     embedder = build_embedder(config)
-
-    from twin.ingestion.obsidian import parse_obsidian_file
 
     skipped = ingested = total_chunks = 0
 
@@ -265,6 +268,10 @@ def ingest(
 @app.command()
 def query(q: str = typer.Argument(..., help="Natural-language query")) -> None:
     """Query the knowledge base with natural language."""
+    from twin.ingestion.embedder import build_embedder
+    from twin.storage.vector import VectorStore
+    from twin.query.retriever import Retriever
+
     config = AppConfig.from_env()
     store = VectorStore(config.data_dir / "lancedb")
     embedder = build_embedder(config)
@@ -285,9 +292,11 @@ def rag(
     provider: str | None = typer.Option(None, "--provider", "-p", help="LLM provider override"),
 ) -> None:
     """Synthesize an answer from retrieved context using an LLM."""
-    from twin.rag.pipeline import RAGPipeline
-
     import asyncio
+    from twin.ingestion.embedder import build_embedder
+    from twin.storage.vector import VectorStore
+    from twin.query.retriever import Retriever
+    from twin.rag.pipeline import RAGPipeline
 
     config = AppConfig.from_env()
     cm = ConfigManager()
@@ -332,10 +341,12 @@ def agent(
     provider: str | None = typer.Option(None, "--provider", "-p", help="LLM provider override"),
 ) -> None:
     """Invoke the agent to complete a multi-step task over the knowledge base."""
+    import asyncio
+    from twin.ingestion.embedder import build_embedder
+    from twin.storage.vector import VectorStore
+    from twin.query.retriever import Retriever
     from twin.agent.runtime import AgentRuntime
     from twin.agent.tools import ToolDispatcher
-
-    import asyncio
 
     config = AppConfig.from_env()
     cm = ConfigManager()
@@ -497,7 +508,7 @@ def watch(
     try:
         from watchdog.observers import Observer
         from twin.ingestion.obsidian import VaultWatcher
-    except ImportError:
+    except ImportError as e:
         console.print("[red]Error:[/red] watchdog not installed. Run: uv add watchdog")
         raise typer.Exit(1)
 

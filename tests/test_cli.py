@@ -116,16 +116,16 @@ class TestIngestCommand:
         assert result.exit_code == 0
         assert "No .md files found" in result.output
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.MetadataStore")
-    @patch("twin.cli.build_embedder")
     @patch("twin.ingestion.obsidian.parse_obsidian_file")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.metadata.MetadataStore")
+    @patch("twin.storage.vector.VectorStore")
     def test_ingests_new_files(
         self,
-        mock_parse_file: MagicMock,
-        mock_build_embedder: MagicMock,
-        mock_meta_cls: MagicMock,
         mock_store_cls: MagicMock,
+        mock_meta_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_parse_file: MagicMock,
         tmp_path: Path,
     ) -> None:
         """New files are written to the vector store and metadata store."""
@@ -142,9 +142,9 @@ class TestIngestCommand:
         mock_store_cls.return_value.write_chunks.assert_called_once_with(chunks, [[0.1] * 768] * 2)
         mock_meta_cls.return_value.upsert_doc.assert_called_once()
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.MetadataStore")
-    @patch("twin.cli.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
+    @patch("twin.storage.metadata.MetadataStore")
+    @patch("twin.ingestion.embedder.build_embedder")
     def test_skips_unchanged_files(
         self,
         mock_build_embedder: MagicMock,
@@ -164,16 +164,16 @@ class TestIngestCommand:
         mock_store_cls.return_value.write_chunks.assert_not_called()
         mock_meta_cls.return_value.upsert_doc.assert_not_called()
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.MetadataStore")
-    @patch("twin.cli.build_embedder")
     @patch("twin.ingestion.obsidian.parse_obsidian_file")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.metadata.MetadataStore")
+    @patch("twin.storage.vector.VectorStore")
     def test_reingest_changed_file(
         self,
-        mock_parse_file: MagicMock,
-        mock_build_embedder: MagicMock,
-        mock_meta_cls: MagicMock,
         mock_store_cls: MagicMock,
+        mock_meta_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_parse_file: MagicMock,
         tmp_path: Path,
     ) -> None:
         """A file with a different hash is re-ingested, not skipped."""
@@ -188,16 +188,16 @@ class TestIngestCommand:
         mock_store_cls.return_value.write_chunks.assert_called_once()
         mock_meta_cls.return_value.upsert_doc.assert_called_once()
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.MetadataStore")
-    @patch("twin.cli.build_embedder")
     @patch("twin.ingestion.obsidian.parse_obsidian_file")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.metadata.MetadataStore")
+    @patch("twin.storage.vector.VectorStore")
     def test_multiple_files_ingested_separately(
         self,
-        mock_parse_file: MagicMock,
-        mock_build_embedder: MagicMock,
-        mock_meta_cls: MagicMock,
         mock_store_cls: MagicMock,
+        mock_meta_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_parse_file: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Each .md file is parsed and written independently."""
@@ -222,14 +222,14 @@ class TestIngestCommand:
 class TestQueryCommand:
     """Tests for `twin query <q>`."""
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_no_results_warns(
         self,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
     ) -> None:
         """Print a warning and exit 0 when the knowledge base returns nothing."""
         mock_retriever_cls.return_value.query.return_value = []
@@ -239,14 +239,14 @@ class TestQueryCommand:
         assert result.exit_code == 0
         assert "No results found" in result.output
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_results_calls_format_results(
         self,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
         sample_query_results: list[QueryResult],
     ) -> None:
         """format_results() is called with the returned chunks."""
@@ -259,14 +259,14 @@ class TestQueryCommand:
         assert result.exit_code == 0
         mock_retriever.format_results.assert_called_once_with(sample_query_results)
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_query_string_is_forwarded_to_retriever(
         self,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
     ) -> None:
         """The exact query string is forwarded to retriever.query() with default k=5."""
         mock_retriever_cls.return_value.query.return_value = []
@@ -298,18 +298,18 @@ class TestRagCommand:
         assert result.exit_code == 1
         assert "ANTHROPIC_API_KEY" in result.output
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
-    @patch("twin.llm.anthropic.Claude")
     @patch("twin.rag.pipeline.RAGPipeline")
+    @patch("twin.llm.anthropic.Claude")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_answer_appears_in_output(
         self,
-        mock_pipeline_cls: MagicMock,
-        mock_claude_cls: MagicMock,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
+        mock_claude_cls: MagicMock,
+        mock_pipeline_cls: MagicMock,
         sample_rag_output: RAGOutput,
     ) -> None:
         """The synthesized answer text appears in the output."""
@@ -324,18 +324,18 @@ class TestRagCommand:
         assert result.exit_code == 0
         assert sample_rag_output.answer in result.output
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
-    @patch("twin.llm.anthropic.Claude")
     @patch("twin.rag.pipeline.RAGPipeline")
+    @patch("twin.llm.anthropic.Claude")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_sources_appear_in_output(
         self,
-        mock_pipeline_cls: MagicMock,
-        mock_claude_cls: MagicMock,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
+        mock_claude_cls: MagicMock,
+        mock_pipeline_cls: MagicMock,
         sample_rag_output: RAGOutput,
     ) -> None:
         """Source filenames appear below the answer."""
@@ -350,18 +350,18 @@ class TestRagCommand:
         assert result.exit_code == 0
         assert "rust.md" in result.output
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
-    @patch("twin.llm.anthropic.Claude")
     @patch("twin.rag.pipeline.RAGPipeline")
+    @patch("twin.llm.anthropic.Claude")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_empty_sources_omits_sources_section(
         self,
-        mock_pipeline_cls: MagicMock,
-        mock_claude_cls: MagicMock,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
+        mock_claude_cls: MagicMock,
+        mock_pipeline_cls: MagicMock,
     ) -> None:
         """Sources section is omitted when the pipeline returns no sources."""
         async def _qstream(q: str, k: int = 5):
@@ -375,18 +375,18 @@ class TestRagCommand:
         assert result.exit_code == 0
         assert "Sources" not in result.output
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
-    @patch("twin.llm.anthropic.Claude")
     @patch("twin.rag.pipeline.RAGPipeline")
+    @patch("twin.llm.anthropic.Claude")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_top_k_option_forwarded_to_pipeline(
         self,
-        mock_pipeline_cls: MagicMock,
-        mock_claude_cls: MagicMock,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
+        mock_claude_cls: MagicMock,
+        mock_pipeline_cls: MagicMock,
         sample_rag_output: RAGOutput,
     ) -> None:
         """--top-k is forwarded as k= to pipeline.query_stream()."""
@@ -403,18 +403,18 @@ class TestRagCommand:
 
         assert calls == [{"q": "question", "k": 3}]
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
-    @patch("twin.llm.anthropic.Claude")
     @patch("twin.rag.pipeline.RAGPipeline")
+    @patch("twin.llm.anthropic.Claude")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_pipeline_constructed_with_retriever_and_llm(
         self,
-        mock_pipeline_cls: MagicMock,
-        mock_claude_cls: MagicMock,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
+        mock_claude_cls: MagicMock,
+        mock_pipeline_cls: MagicMock,
         sample_rag_output: RAGOutput,
     ) -> None:
         """RAGPipeline receives the Retriever and Claude instances."""
@@ -453,20 +453,20 @@ class TestAgentCommand:
         assert result.exit_code == 1
         assert "ANTHROPIC_API_KEY" in result.output
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
-    @patch("twin.llm.anthropic.Claude")
-    @patch("twin.agent.runtime.AgentRuntime")
     @patch("twin.agent.tools.ToolDispatcher")
+    @patch("twin.agent.runtime.AgentRuntime")
+    @patch("twin.llm.anthropic.Claude")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_final_answer_appears_in_output(
         self,
-        mock_dispatcher_cls: MagicMock,
-        mock_runtime_cls: MagicMock,
-        mock_claude_cls: MagicMock,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
+        mock_claude_cls: MagicMock,
+        mock_runtime_cls: MagicMock,
+        mock_dispatcher_cls: MagicMock,
         sample_agent_output: AgentOutput,
     ) -> None:
         """The agent's final answer text appears in the output."""
@@ -481,20 +481,20 @@ class TestAgentCommand:
         assert result.exit_code == 0
         assert sample_agent_output.final_answer in result.output
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
-    @patch("twin.llm.anthropic.Claude")
-    @patch("twin.agent.runtime.AgentRuntime")
     @patch("twin.agent.tools.ToolDispatcher")
+    @patch("twin.agent.runtime.AgentRuntime")
+    @patch("twin.llm.anthropic.Claude")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_tool_call_count_appears_in_output(
         self,
-        mock_dispatcher_cls: MagicMock,
-        mock_runtime_cls: MagicMock,
-        mock_claude_cls: MagicMock,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
+        mock_claude_cls: MagicMock,
+        mock_runtime_cls: MagicMock,
+        mock_dispatcher_cls: MagicMock,
         sample_agent_output: AgentOutput,
     ) -> None:
         """The tool call count is displayed after the answer panel."""
@@ -509,20 +509,20 @@ class TestAgentCommand:
         assert result.exit_code == 0
         assert "Tool calls made: 1" in result.output
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
-    @patch("twin.llm.anthropic.Claude")
-    @patch("twin.agent.runtime.AgentRuntime")
     @patch("twin.agent.tools.ToolDispatcher")
+    @patch("twin.agent.runtime.AgentRuntime")
+    @patch("twin.llm.anthropic.Claude")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_verbose_shows_activity_log(
         self,
-        mock_dispatcher_cls: MagicMock,
-        mock_runtime_cls: MagicMock,
-        mock_claude_cls: MagicMock,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
+        mock_claude_cls: MagicMock,
+        mock_runtime_cls: MagicMock,
+        mock_dispatcher_cls: MagicMock,
         sample_agent_output: AgentOutput,
     ) -> None:
         """--verbose prints the Activity Log section with tool call and final answer entries."""
@@ -539,20 +539,20 @@ class TestAgentCommand:
         assert "tool_call" in result.output
         assert "done" in result.output
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
-    @patch("twin.llm.anthropic.Claude")
-    @patch("twin.agent.runtime.AgentRuntime")
     @patch("twin.agent.tools.ToolDispatcher")
+    @patch("twin.agent.runtime.AgentRuntime")
+    @patch("twin.llm.anthropic.Claude")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_no_verbose_hides_activity_log(
         self,
-        mock_dispatcher_cls: MagicMock,
-        mock_runtime_cls: MagicMock,
-        mock_claude_cls: MagicMock,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
+        mock_claude_cls: MagicMock,
+        mock_runtime_cls: MagicMock,
+        mock_dispatcher_cls: MagicMock,
         sample_agent_output: AgentOutput,
     ) -> None:
         """Activity log is hidden by default (no --verbose flag)."""
@@ -567,20 +567,20 @@ class TestAgentCommand:
         assert result.exit_code == 0
         assert "Activity Log" not in result.output
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
-    @patch("twin.llm.anthropic.Claude")
-    @patch("twin.agent.runtime.AgentRuntime")
     @patch("twin.agent.tools.ToolDispatcher")
+    @patch("twin.agent.runtime.AgentRuntime")
+    @patch("twin.llm.anthropic.Claude")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_max_iter_forwarded_to_runtime(
         self,
-        mock_dispatcher_cls: MagicMock,
-        mock_runtime_cls: MagicMock,
-        mock_claude_cls: MagicMock,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
+        mock_claude_cls: MagicMock,
+        mock_runtime_cls: MagicMock,
+        mock_dispatcher_cls: MagicMock,
         sample_agent_output: AgentOutput,
     ) -> None:
         """--max-iter is forwarded as max_iterations= to AgentRuntime."""
@@ -596,20 +596,20 @@ class TestAgentCommand:
             max_iterations=3,
         )
 
-    @patch("twin.cli.VectorStore")
-    @patch("twin.cli.build_embedder")
-    @patch("twin.cli.Retriever")
-    @patch("twin.llm.anthropic.Claude")
-    @patch("twin.agent.runtime.AgentRuntime")
     @patch("twin.agent.tools.ToolDispatcher")
+    @patch("twin.agent.runtime.AgentRuntime")
+    @patch("twin.llm.anthropic.Claude")
+    @patch("twin.query.retriever.Retriever")
+    @patch("twin.ingestion.embedder.build_embedder")
+    @patch("twin.storage.vector.VectorStore")
     def test_task_string_forwarded_to_runtime(
         self,
-        mock_dispatcher_cls: MagicMock,
-        mock_runtime_cls: MagicMock,
-        mock_claude_cls: MagicMock,
-        mock_retriever_cls: MagicMock,
-        mock_build_embedder: MagicMock,
         mock_store_cls: MagicMock,
+        mock_build_embedder: MagicMock,
+        mock_retriever_cls: MagicMock,
+        mock_claude_cls: MagicMock,
+        mock_runtime_cls: MagicMock,
+        mock_dispatcher_cls: MagicMock,
         sample_agent_output: AgentOutput,
     ) -> None:
         """The task string is forwarded verbatim to runtime.execute_stream()."""
