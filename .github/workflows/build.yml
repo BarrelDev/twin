@@ -19,17 +19,6 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: pip install maturin pyapp-builder
-      - run: maturin build --release
-      - run: pyapp-builder build --output ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
-        with:
-          path: ${{ matrix.target }}
       - uses: actions/checkout@v4.2.2
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5.6.0
