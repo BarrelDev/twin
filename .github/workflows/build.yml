@@ -26,8 +26,16 @@ jobs:
           python-version: "3.11"
 
       # Build the Twin wheel
-      - run: pip install maturin
-      - run: maturin build --release --out dist/
+      - name: Build wheel
+        run: |
+          pip install maturin
+          maturin build --release --out dist/
+
+      # Find the wheel and store its path
+      - name: Get wheel path
+        id: wheel
+        shell: bash
+        run: echo "path=$(ls dist/*.whl | head -n 1)" >> $GITHUB_OUTPUT
 
       # Build PyApp with Twin bundled
       - name: Build PyApp binary
@@ -36,7 +44,7 @@ jobs:
           PYAPP_PROJECT_VERSION: ${{ github.ref_name }}
           PYAPP_PYTHON_VERSION: "3.11"
           # Points PyApp at the wheel we just built
-          PYAPP_PROJECT_PATH: dist/
+          PYAPP_PROJECT_PATH: ${{ steps.wheel.outputs.path }}
         run: cargo install pyapp --root pyapp-out
       - name: Rename binary (Unix)
         if: runner.os != 'Windows'
