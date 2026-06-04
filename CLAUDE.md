@@ -3,491 +3,491 @@
 This file is read by Claude Code at the start of every session.
 It defines architectural decisions, conventions, and constraints.
 Do not override these without explicit instruction from the project author.
-Do not create extraneous documentation without cause.
 
 ---
 
-## Current Phase: 2
+## Current Phase: 3
 
 Phase 0 (retrieval core) — Complete
 Phase 1 (RAG loop + basic agent) — Complete
-Phase 2 (multi-provider, keychain, Obsidian sync, expanded ingestion) — In Progress
+Phase 2 (multi-provider, keychain, Obsidian sync, expanded ingestion) — Complete
+Phase 3 (egui desktop UI, graph-aware retrieval, agent memory, distribution) — In Progress
 
-Do not implement anything from Phase 3 unless explicitly asked.
+Do not implement anything from Phase 4 unless explicitly asked.
 
 ---
 
 ## Project Overview
 
-Twin is a local-first knowledge OS with agent execution. Users ingest Markdown notes,
-PDFs, and URLs into a local vector store, then query them with natural language or
-run agents that reason across the knowledge base.
+Twin is a local-first knowledge OS with agent execution and a native desktop interface.
+Users ingest Markdown notes, PDFs, and URLs into a local vector store, then interact
+via a Jarvis-style egui desktop app or the twin CLI.
 
-**The full CLI surface as of Phase 2:**
+The interface is ambient intelligence: chat at the center, contextual panels for KB
+browsing and agent execution, dashboard widgets showing live system state.
+
+**Full CLI surface:**
 ```
-twin ingest <path|url>          # ingest Markdown, PDF, or URL
-twin query "<q>"                # raw semantic search (debug tool)
-twin rag "<q>"                  # RAG: retrieve + synthesize + cite
-twin agent "<task>"             # multi-step agent with KB search + vault write-back
-twin watch <vault-path>         # Obsidian vault watcher (background)
-twin config set-key             # interactive encrypted key setup
-twin config set-provider <p>    # set active LLM provider
-twin config set-model <m>       # set default model for active provider
-twin config list                # show current config (never reveal key values)
-twin config list-models         # list models for active provider
-twin config remove-key <p>      # remove a provider's key
-twin usage                      # token and cost summary by provider/day
+twin ingest <path|url>          ingest Markdown, PDF, or URL
+twin query "<q>"                raw semantic search (debug)
+twin rag "<q>"                  retrieve + synthesize + cite (streaming)
+twin agent "<task>"             multi-step agent with KB search + vault write-back
+twin watch <vault-path>         Obsidian vault watcher (background process)
+twin config set-key             interactive encrypted key setup
+twin config set-provider <p>    set active LLM provider
+twin config set-model <m>       set default model for active provider
+twin config list                show config (never reveal key values)
+twin config list-models         list models for active provider
+twin config remove-key <p>      remove a provider's key
+twin usage                      token and cost summary
+twin memory list                show long-term memory records
+twin memory show <id>           show full content of a memory record
+twin memory delete <id>         delete a memory record
+twin memory distill             manually trigger session distillation
+twin memory clear               delete all memory (with confirmation)
+
+twin-ui                         launch the desktop interface
 ```
+
+**All structured CLI output uses --json flag for machine-readable responses.**
+twin-ui always passes --json and parses responses. Never break this contract.
 
 ---
 
-## Directory Structure
+## Repository Structure
 
 ```
-twin/
-  __init__.py
-  config.py               AppConfig dataclass, env-var overrides, enums
-  config_manager.py       Encrypted keychain + config.json read/write
-  usage.py                Token/cost logging and twin usage reporting
-  cli.py                  Typer CLI — all commands defined here
-  ingestion/
+twin-repo/
+  Cargo.toml              workspace root — members: twin-core, twin-ui
+  twin-core/              Rust crate: chunker + tokenizer + PyO3 bindings
+    Cargo.toml
+    src/
+      lib.rs              PyO3 bindings
+      chunker.rs          heading-aware chunking logic
+      tokens.rs           word-based token counting
+  twin-ui/                Rust binary: egui desktop application
+    Cargo.toml
+    src/
+      main.rs             eframe entry point, app state init
+      app.rs              TwinApp struct, egui update() loop
+      panels/
+        chat.rs           chat panel: message history, streaming, citations
+        kb_browser.rs     document list + graph view
+        agent.rs          agent task input + reasoning trace display
+        settings.rs       provider/model/key config panel
+      widgets/
+        dashboard.rs      KB stats, usage, provider, watcher widgets
+        source_chip.rs    inline citation chip component
+        streaming_text.rs token-by-token text renderer
+      subprocess.rs       twin CLI spawner, JSON parser, channel bridge
+      graph.rs            petgraph wrapper, force layout, painter renderer
+      memory.rs           session memory log, distillation trigger
+  twin/                   Python package
     __init__.py
-    parser.py             Markdown chunking (calls twin_core Rust extension)
-    embedder.py           sentence-transformers wrapper, prefix handling
-    pdf.py                pymupdf-based PDF parser
-    url.py                trafilatura-based URL ingester
-    obsidian.py           Wikilink/tag/frontmatter parser + watchdog watcher
-  storage/
-    __init__.py
-    vector.py             LanceDB schema, ANN search, source filtering
-    metadata.py           SQLite document registry, SHA-256 dedup
-  query/
-    __init__.py
-    retriever.py          Search orchestration, ranking, Rich output
-  llm/
-    __init__.py
-    base.py               Abstract LLMProvider interface
-    anthropic.py          Anthropic implementation
-    openai.py             OpenAI implementation
-    gemini.py             Gemini implementation
-    ollama.py             Ollama (local) implementation
-    openrouter.py         OpenRouter implementation
-  rag/
-    __init__.py
-    pipeline.py           Retrieve → format → generate → return (streaming)
-    context.py            Chunk formatting with source attribution
-    prompts.py            System prompt definitions
-  agent/
-    __init__.py
-    runtime.py            Multi-step tool-using loop, streaming final answer
-    tools.py              search_knowledge_base + write_vault_note tools
-    log.py                AgentLog: chronological event log, JSON-serializable
-twin_core/
-  Cargo.toml
-  src/
-    lib.rs                PyO3 bindings
-    chunker.rs            Heading-aware chunking logic
-    tokens.rs             Token counting (word-based)
-tests/
-  conftest.py             Shared fixtures — mock embedder, tmp LanceDB, tmp vault
-  test_parser.py
-  test_embedder.py
-  test_vector.py
-  test_metadata.py
-  test_retriever.py
-  test_llm.py
-  test_context.py
-  test_rag_pipeline.py
-  test_agent_tools.py
-  test_agent_log.py
-  test_agent_runtime.py
-  test_pdf.py             new in Phase 2
-  test_url.py             new in Phase 2
-  test_obsidian.py        new in Phase 2
-  test_providers.py       new in Phase 2
-  test_config_manager.py  new in Phase 2
-  test_usage.py           new in Phase 2
-pyproject.toml
-CLAUDE.md
-README.md
-setup.sh
-setup.bat
+    config.py
+    config_manager.py
+    usage.py
+    cli.py
+    ingestion/
+      parser.py           calls twin_core Rust extension
+      embedder.py
+      pdf.py
+      url.py
+      obsidian.py
+    storage/
+      vector.py
+      metadata.py
+    query/
+      retriever.py        updated: graph-augmented retrieval in Phase 3
+    llm/
+      base.py
+      anthropic.py
+      openai.py
+      gemini.py
+      ollama.py
+      openrouter.py
+    rag/
+      pipeline.py
+      context.py
+      prompts.py
+    agent/
+      runtime.py          updated: memory-augmented context in Phase 3
+      tools.py
+      log.rs
+    memory/               new in Phase 3
+      __init__.py
+      session.py          in-process session event log
+      store.py            SQLite long-term memory records + LanceDB embeddings
+      distill.py          LLM-based session distillation
+  tests/
+    conftest.py
+    ... (existing test files)
+    test_graph.py         new in Phase 3
+    test_memory_session.py    new in Phase 3
+    test_memory_store.py      new in Phase 3
+    test_memory_distill.py    new in Phase 3
+    test_subprocess_bridge.py new in Phase 3
+  pyproject.toml
+  CLAUDE.md
+  README.md
+  setup.sh
+  setup.bat
 ```
 
 Do not create files outside this structure without asking first.
 
 ---
 
-## Tech Stack — Fixed Decisions
+## Cargo Workspace Rules
 
-Do not suggest alternatives to these choices.
+The repo root Cargo.toml is a workspace manifest. It must always read:
 
-| Concern | Choice | Do NOT use |
-|---|---|---|
-| Language | Python 3.11+, Rust (chunking hot path) | — |
-| Vector store | LanceDB | ChromaDB, Pinecone, Weaviate, FAISS |
-| Embeddings | sentence-transformers (nomic-embed-text-v1.5) | OpenAI embeddings, Cohere |
-| Metadata store | SQLite via SQLModel | PostgreSQL, MongoDB, raw sqlite3 |
-| CLI | Typer | argparse, click, Fire |
-| Terminal output | Rich | print(), logging to stdout |
-| Testing | pytest | unittest |
-| Dependency mgmt | uv + pyproject.toml | pip + requirements.txt, Poetry |
-| Abstraction libs | None | LangChain, LlamaIndex, Haystack |
-| PDF extraction | pymupdf | pdfplumber, pypdf, pdfminer |
-| Web extraction | trafilatura | BeautifulSoup, newspaper3k, requests+bs4 |
-| Encryption | cryptography (PyCA) | pycryptodome, Fernet alone |
-| Filesystem watch | watchdog | polling loops, inotify directly |
-| HTTP client | httpx | requests (for new code) |
+```toml
+[workspace]
+members = ["twin-core", "twin-ui"]
+resolver = "2"
+```
+
+Both crates share a single Cargo.lock. Do not create separate lockfiles.
+Build both from the workspace root: `cargo build --release`
+Do not run cargo commands from inside twin-core/ or twin-ui/ unless
+specifically testing one crate in isolation.
 
 ---
 
-## LLM Provider Architecture
+## twin-ui Architecture
 
-### The interface contract (llm/base.py)
-Every provider implements exactly these methods. Do not add methods to the
-interface without updating all concrete implementations.
+### The core rule: twin-ui never imports Python
+twin-ui communicates with the Twin Python backend exclusively via subprocess.
+It does not link against the Python runtime, does not import twin_core as a library,
+and does not call any Python functions directly.
+Every action in the UI maps to a twin CLI command.
 
+### The --json contract (never break this)
+Every CLI command that produces structured output must support a --json flag.
+twin-ui always passes --json. Responses must be valid JSON on stdout.
+Errors go to stderr as plain text. Exit code 0 = success, non-zero = failure.
+
+JSON response schemas (do not change without updating twin-ui parsers):
+
+```
+twin query --json "<q>"
+→ [{"text": str, "source": str, "score": float, "heading_path": [str]}]
+
+twin rag --json "<q>"
+→ {"answer": str, "sources": [{"file": str, "heading": str}], "usage": {"tokens": int, "cost": float|null}}
+
+twin agent --json "<task>"
+→ stream of newline-delimited JSON:
+  {"type": "tool_call", "tool": str, "input": str}
+  {"type": "tool_result", "tool": str, "output": str}
+  {"type": "answer", "text": str}
+  {"type": "log", "message": str}
+
+twin ingest --json <path>
+→ {"doc_id": str, "chunks_added": int, "skipped": bool}
+
+twin usage --json
+→ [{"date": str, "provider": str, "calls": int, "tokens": int, "cost": float|null}]
+
+twin config list --json
+→ {"provider": str, "model": str, "keys_present": [str]}
+
+twin memory list --json
+→ [{"id": str, "created_at": str, "type": str, "content": str}]
+```
+
+### Async subprocess pattern (always use this, never block the UI thread)
+```rust
+// CORRECT — background thread + channel
+let (tx, rx) = std::sync::mpsc::channel::<UiEvent>();
+std::thread::spawn(move || {
+    let output = spawn_twin_command(&["rag", "--json", &query]);
+    tx.send(UiEvent::RagResponse(output)).unwrap();
+});
+// Store rx in app state, poll on each frame
+
+// WRONG — blocks the UI thread, causes freeze
+let output = spawn_twin_command(&["rag", "--json", &query]);
+```
+
+### egui immediate-mode rules
+- All state lives in TwinApp struct fields — never in local variables across frames
+- Do not call expensive operations inside the update() loop directly
+- Use background threads for all subprocess calls, file I/O, and graph computation
+- Trigger repaints with ctx.request_repaint() after receiving channel messages
+- Do not use .unwrap() on channel recv — use try_recv() and handle Empty gracefully
+
+---
+
+## UI Layout — Do Not Deviate From This
+
+```
+┌─────────────────────────────────────────────────────┐
+│  TOP BAR: KB name | provider+model | tokens | ⚙     │
+├──────────────┬──────────────────────┬───────────────┤
+│              │                      │               │
+│  LEFT PANEL  │     CHAT (center)    │  RIGHT PANEL  │
+│  KB Browser  │                      │  Agent Panel  │
+│  (toggle)    │  message bubbles     │  (toggle)     │
+│              │  streaming text      │               │
+│  doc list    │  source chips        │  task input   │
+│  graph view  │                      │  tool calls   │
+│              │  [input bar]         │  trace log    │
+├──────────────┴──────────────────────┴───────────────┤
+│  BOTTOM: last ingest | watcher status | docs | cost  │
+└─────────────────────────────────────────────────────┘
+```
+
+Panels are collapsible. Chat is always visible. Dashboard widgets are always visible.
+Do not add new top-level layout zones without explicit instruction.
+
+### Visual design constants (define in app.rs, reference everywhere)
+```rust
+pub const BG_PRIMARY:    egui::Color32 = egui::Color32::from_rgb(10, 10, 15);
+pub const BG_SECONDARY:  egui::Color32 = egui::Color32::from_rgb(18, 18, 28);
+pub const ACCENT:        egui::Color32 = egui::Color32::from_rgb(61, 90, 254);
+pub const TEXT_PRIMARY:  egui::Color32 = egui::Color32::from_rgb(220, 220, 235);
+pub const TEXT_DIM:      egui::Color32 = egui::Color32::from_rgb(120, 120, 145);
+pub const SUCCESS:       egui::Color32 = egui::Color32::from_rgb(40, 200, 100);
+pub const WARNING:       egui::Color32 = egui::Color32::from_rgb(255, 180, 0);
+```
+
+Do not hardcode color values outside this block. Reference these constants everywhere.
+
+---
+
+## Graph-Aware Retrieval
+
+### The scoring formula (do not change without discussion)
 ```python
-class LLMProvider(ABC):
-    @abstractmethod
-    async def complete(
-        self,
-        messages: list[Message],
-        tools: list[ToolDef] | None = None,
-        system: str | None = None,
-    ) -> LLMResponse: ...
-
-    @abstractmethod
-    async def stream(
-        self,
-        messages: list[Message],
-        tools: list[ToolDef] | None = None,
-        system: str | None = None,
-    ) -> AsyncIterator[str]: ...
-
-    @abstractmethod
-    def estimate_cost(
-        self,
-        prompt_tokens: int,
-        completion_tokens: int,
-    ) -> float | None: ...
-
-    @abstractmethod
-    def list_models(self) -> list[ModelInfo]: ...
+combined_score = (GRAPH_VECTOR_WEIGHT * vector_similarity) + \
+                 (GRAPH_PROXIMITY_WEIGHT * graph_proximity)
 ```
 
-### Provider resolution order (do not change)
-1. Explicit --provider flag on the CLI command
-2. Active provider set via twin config set-provider (stored in config.json)
-3. TWIN_PROVIDER environment variable
-4. Anthropic (default fallback)
+Defaults: GRAPH_VECTOR_WEIGHT = 0.7, GRAPH_PROXIMITY_WEIGHT = 0.3
+Configurable via TWIN_GRAPH_VECTOR_WEIGHT and TWIN_GRAPH_PROXIMITY_WEIGHT env vars.
 
-### Model capability detection
-Every ModelInfo must include supports_tools: bool.
-If the active model does not support tools, twin agent must fail with a
-descriptive error — never silently fall back to a tool-less mode.
+### Graph proximity values
+- Direct neighbor (1 hop): 1.0
+- Two-hop neighbor: 0.5
+- Beyond 2 hops: 0.0 (not included)
 
-### Ollama special handling
-- No API key. Do not prompt for one or check the keychain.
-- Base URL is configurable: TWIN_OLLAMA_URL, default http://localhost:11434
-- list_models() makes a live HTTP call to the Ollama API — do not hardcode models.
+### Graph rebuild rules
+- Full rebuild: on first startup or metadata store reset only
+- Incremental rebuild: on vault watcher ingest event (update only changed doc's edges)
+- Never rebuild synchronously on the UI thread
 
-### OpenRouter
-- Single key gives access to multiple underlying providers.
-- Model name format: provider/model (e.g. anthropic/claude-sonnet-4-5)
-- list_models() fetches the OpenRouter model list from their API.
+### petgraph usage
+- Graph type: DiGraph<DocNode, EdgeWeight>
+- DocNode: { doc_id: String, title: String, source_path: String }
+- EdgeWeight: f32 (link frequency, normalized 0.0-1.0)
+- Store as Arc<RwLock<DiGraph<...>>> for safe cross-thread access
 
 ---
 
-## Encrypted Keychain
+## Agent Memory
 
-### Storage locations
-- ~/.twin/keychain.enc   AES-256-GCM encrypted key-value store
-- ~/.twin/config.json    Non-sensitive config (plaintext JSON)
-- ~/.twin/usage.jsonl    Token/cost log (plaintext JSONL, one record per line)
+### Two-tier architecture (do not conflate the tiers)
 
-### Encryption rules
-- Keys are encrypted with AES-256-GCM
-- The encryption key is derived from username + machine ID via PBKDF2
-- The keychain is intentionally non-portable (machine-bound)
-- Never log, print, or return a raw API key anywhere in the codebase
-- twin config list shows which providers have keys — never the key values
+**Session memory (twin/memory/session.py)**
+- In-process Vec of SessionEvent dataclasses
+- Cleared on application exit — never persisted directly
+- Event types: query_asked, rag_response, agent_task, tool_result
+- Maximum 50 events retained (oldest dropped when exceeded)
+- Passed to agent as additional context: last 5 events by default
 
-### Key resolution order (do not change)
-1. Keychain (highest priority)
-2. Environment variable (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
-3. Raise a descriptive error with onboarding instructions
+**Long-term memory (twin/memory/store.py)**
+- SQLite table: memory_records
+- LanceDB collection: memory_embeddings (for semantic search)
+- Written only by the distillation process — never written directly
+- Read at agent startup: top-3 records by semantic similarity to task
 
-### First-run onboarding
-If no key is found for the active provider, print a clear message:
-  - Which provider was requested
-  - The twin config set-key command to fix it
-  - The fallback option (twin config set-provider ollama for no-key local use)
-Do NOT raise a bare exception or Python traceback.
-
----
-
-## Obsidian Integration
-
-### The hard boundary rule — never violate this
-Twin NEVER writes outside <vault>/Agents/.
-This is enforced at the path level in write_vault_note, not as a convention.
-Sanitize all agent-provided titles before constructing file paths.
-Reject any path that would escape the Agents/ directory.
-
-### Write-back format
-Agent output notes follow this structure:
-  <vault>/Agents/<task-slug>/<ISO-timestamp>-<sanitized-title>.md
-
-Frontmatter on every agent-generated note:
-```yaml
----
-generated_by: twin-agent
-task: <original task string>
-created: <ISO 8601 timestamp>
-tags: [twin-generated]
----
-```
-
-### Watcher behavior
-- Debounce: 500ms delay before triggering re-ingest on file change
-- Scope: watches *.md files only — ignore all other extensions
-- Agents/ folder: watcher DOES ingest agent-generated notes (intentional)
-- twin watch --status shows: running/stopped, last event, Agents/ note count
-
-### Obsidian-specific metadata (stored in SQLite, not just vector store)
-- link_targets: list of wikilink targets extracted from the note
-- tags: list of Obsidian tags (including nested #parent/child tags)
-- full frontmatter: all YAML fields, not just id
-
----
-
-## Streaming
-
-### Which commands stream
-- twin rag: streams synthesized answer; sources printed after stream completes
-- twin agent: streams final answer; tool call activity printed inline as it happens
-- twin query: does NOT stream (returns ranked chunks, no generation)
-- twin ingest: does NOT stream (Rich progress bar is sufficient)
-
-### Streaming rules
-- Use Rich Live for rendering streamed output — never write to stdout directly
-- Sources for twin rag are collected during streaming and deduplicated before printing
-- Never print the sources section until the stream is complete
-- Tool calls interrupt the stream: flush partial response, execute tool, resume stream
-- The activity log captures interruption points
-
----
-
-## Cost and Token Tracking
-
-Every LLM call must log to ~/.twin/usage.jsonl. The record schema:
+### Memory record schema
 ```python
 @dataclass
-class UsageRecord:
-    timestamp: str          # ISO 8601
-    command: str            # "rag" | "agent"
-    provider: str           # "anthropic" | "openai" | etc.
-    model: str
-    prompt_tokens: int
-    completion_tokens: int
-    estimated_cost_usd: float | None  # None for Ollama
+class MemoryRecord:
+    memory_id: str          # UUID
+    created_at: str         # ISO 8601
+    session_id: str         # links to originating session
+    memory_type: str        # "fact" | "preference" | "task_outcome" | "context"
+    content: str            # distilled text, max 512 tokens
+    source_docs: list[str]  # doc_ids referenced in the session
 ```
 
-At the end of every rag or agent command, print a one-line summary:
-  "3 calls · 1,240 tokens · ~$0.003"
-For Ollama: "2 calls · 890 tokens · local (no cost)"
+### Distillation rules
+- Triggered automatically on application close
+- Triggered manually by twin memory distill
+- Uses the active LLM provider — respect the same provider resolution order
+- Distillation prompt lives in agent/prompts.py — do not hardcode it elsewhere
+- If distillation fails (API error, no provider), log the error and skip silently
+  — never block application close on distillation
+
+### Context assembly order (do not change)
+1. System prompt (fixed)
+2. Top-3 long-term memory records (semantic search against task)
+3. Last 5 session events
+4. Top-5 KB retrieval chunks
+5. User task/query
 
 ---
 
-## Ingestion Rules
+## Tech Stack — Fixed Decisions
 
-### Idempotency (do not break this)
-Running ingest twice on unchanged content produces no changes.
-SHA-256 hash of file content (or URL content) is stored in metadata.
-On re-ingest: hash match → skip; hash changed → delete old chunks, insert new.
+### Python side (unchanged from Phase 2)
+| Concern | Choice | Do NOT use |
+|---|---|---|
+| Vector store | LanceDB | ChromaDB, Pinecone, Weaviate |
+| Embeddings | sentence-transformers (nomic-embed-text-v1.5) | OpenAI embeddings |
+| Metadata store | SQLite via SQLModel | PostgreSQL, MongoDB |
+| CLI | Typer | argparse, click, Fire |
+| Terminal output | Rich | print() |
+| Testing | pytest | unittest |
+| Dependency mgmt | uv + pyproject.toml | pip + requirements.txt |
+| Abstraction libs | None | LangChain, LlamaIndex |
+| PDF extraction | pymupdf | pdfplumber, pypdf |
+| Web extraction | trafilatura | BeautifulSoup |
+| Encryption | cryptography (PyCA) | pycryptodome |
+| Filesystem watch | watchdog | polling loops |
 
-### Format routing (in cli.py ingest command)
-- Starts with http:// or https:// → url.py
-- Extension .pdf → pdf.py
-- Extension .md or .txt → parser.py
-- Explicit --type flag overrides detection
-
-### PDF source attribution format
-"document.pdf › p.4"  (not just filename)
-
-### URL source attribution format
-"domain.com › Page Title"
-
-### Wikilink extraction (obsidian.py)
-Extract [[Note Name]] and [[Note Name|Alias]] patterns.
-Store note name (not alias) as link target in metadata.
-Strip wikilinks from chunk text before embedding — embed clean prose.
+### Rust side
+| Concern | Choice | Do NOT use |
+|---|---|---|
+| UI framework | egui + eframe | Tauri, Iced, GTK, Qt |
+| Graph | petgraph | custom adjacency list |
+| JSON | serde + serde_json | manual parsing |
+| Async | tokio (twin-ui only) | async-std |
+| HTTP (if needed) | reqwest | hyper directly |
 
 ---
 
 ## Code Conventions
 
-### Type hints are required everywhere
+### Rust (twin-ui and twin-core)
+- Use `?` for error propagation — never .unwrap() in production paths
+- .unwrap() is acceptable only for: static regex compilation, test code, truly
+  unreachable paths (with a comment explaining why)
+- All public functions have doc comments (///)
+- Use thiserror for custom error types, not Box<dyn Error>
+- Structs that cross thread boundaries must be Send + Sync — verify at compile time
+- No unsafe code without explicit author approval and a safety comment
+
+### Python (twin/)
+- Type hints required on every function signature
+- Dataclasses for structured data, not dicts
+- No magic strings — use enums or constants
+- Async for all LLM provider calls
+- Docstrings on all public functions (Google style)
+- No LangChain, LlamaIndex, or abstraction frameworks
+
+### The --json contract (Python cli.py)
+Every command that twin-ui calls must handle --json:
 ```python
-# CORRECT
-def complete(self, messages: list[Message], tools: list[ToolDef] | None = None) -> LLMResponse: ...
-
-# WRONG
-def complete(self, messages, tools=None): ...
+@app.command()
+def rag(query: str, json_output: bool = typer.Option(False, "--json")):
+    result = run_rag_pipeline(query)
+    if json_output:
+        print(json.dumps(result.to_dict()))
+    else:
+        # Rich formatted output for human use
+        console.print(result.answer)
 ```
-
-### Use dataclasses for structured data, not dicts
-```python
-# CORRECT
-@dataclass
-class UsageRecord:
-    timestamp: str
-    provider: str
-    ...
-
-# WRONG
-record = {"timestamp": ..., "provider": ...}
-```
-
-### No magic strings — use enums or constants
-```python
-# CORRECT
-class Provider(str, Enum):
-    ANTHROPIC  = "anthropic"
-    OPENAI     = "openai"
-    GEMINI     = "gemini"
-    OLLAMA     = "ollama"
-    OPENROUTER = "openrouter"
-
-# WRONG
-provider = "anthropic"
-```
-
-### Async for all LLM calls
-All provider methods are async. Use asyncio.run() at the CLI boundary.
-Do not mix sync and async LLM calls.
-
-### Docstrings on all public functions
-Follow the Google style used throughout the existing codebase:
-```python
-def write_vault_note(self, title: str, content: str, tags: list[str] | None = None) -> Path:
-    """
-    Write an agent-generated note to the Obsidian vault.
-
-    Writes to <vault>/Agents/<task-slug>/<timestamp>-<title>.md.
-    Never writes outside the Agents/ directory.
-
-    Args:
-        title: Note title. Used as filename (sanitized) and H1 heading.
-        content: Markdown body content.
-        tags: Optional list of Obsidian tags.
-
-    Returns:
-        Path to the created file, relative to vault root.
-
-    Raises:
-        ValueError: If the sanitized path would escape Agents/.
-    """
-```
-
-### Functions do one thing
-If a function does more than one conceptual operation, split it.
+Do not break existing --json response schemas. twin-ui parsers depend on them.
 
 ---
 
 ## Testing Requirements
 
+### Python tests
 - Every module has a corresponding test file
-- Use tmp_path for all file and DB operations — never write to real paths
-- Mock all LLM provider calls in tests — never make real API calls in the test suite
-- Mock the embedding model in tests that do not specifically test embedding quality
-- The retrieval quality test in test_retriever.py remains the correctness bar:
-  correct chunk in top-3 for at least 8/10 known-answer queries
-- Aim for >80% line coverage across all modules
+- Use tmp_path for all file/DB operations
+- Mock all LLM provider calls — never make real API calls in tests
+- Mock the embedding model in tests not specifically testing embedding quality
+- Retrieval quality bar: correct chunk in top-3 for 8/10 known-answer queries
+- New in Phase 3: graph retrieval must outperform or match pure vector on the
+  same 10-query benchmark
 
 ```bash
 uv run pytest tests/ -v --cov=twin --cov-report=term-missing
 ```
 
-### Test fixtures (conftest.py)
-These fixtures must exist and be used consistently:
-- tmp_lance_db: temporary LanceDB instance, cleaned up after test
-- tmp_sqlite: temporary SQLite metadata store
-- mock_embedder: returns deterministic fake embeddings (no model loaded)
-- mock_llm_provider: returns canned responses, records calls made
-- tmp_vault: temporary directory structured as an Obsidian vault
+### Rust tests (twin-ui)
+- Unit tests in #[cfg(test)] blocks within each source file
+- subprocess.rs must have tests that mock the twin binary response
+- graph.rs must have tests for: graph construction, proximity scoring,
+  combined score calculation, force layout convergence
+- Do not make real subprocess calls in Rust tests — use a mock twin binary
+  or a fixture response string
+
+```bash
+cargo test --workspace
+```
+
+### Fixtures (conftest.py — must exist and be used)
+- tmp_lance_db, tmp_sqlite, mock_embedder, mock_llm_provider, tmp_vault
+- New in Phase 3: tmp_graph (pre-built petgraph DiGraph with 10 nodes/edges)
+- New in Phase 3: mock_session_memory (SessionMemory with 5 test events)
 
 ---
 
 ## What Claude Code Should Always Do
 
-- Write type hints on every function signature
-- Write a docstring on every public function
+### General
+- Write type hints / doc comments on every public function (Python and Rust)
 - Write or update the corresponding test when implementing anything
+- Check if the function already exists before implementing — ask if unclear
+- Note any new dependencies explicitly before adding them
+- Run relevant tests after implementing to verify
+
+### Rust-specific
+- Use ? for error propagation
+- Run cargo clippy before considering a Rust implementation done
+- Keep egui rendering code inside the update() loop only
+- Spawn background threads for anything that takes >1ms
+
+### Python-specific
 - Use Rich for all terminal output
 - Use pathlib.Path for all file paths
 - Use async/await for all LLM provider calls
-- Check the existing codebase before implementing — ask if a similar function exists
-- Run the relevant tests after implementing to verify
-- Note any new dependencies explicitly before adding them
+- Always pass --json when calling twin from within twin-ui subprocess bridge
 
 ## What Claude Code Should Never Do
 
-- Import from LangChain, LlamaIndex, or any abstraction framework
+### General
+- Break the --json CLI contract
 - Make real API calls in tests
 - Write to real filesystem paths in tests
-- Log, print, or return raw API key values anywhere
+- Add new top-level layout zones to the UI without instruction
+- Implement Phase 4 features
+
+### Rust-specific
+- Call Python from twin-ui (no PyO3 in twin-ui — that is twin-core only)
+- Block the egui update() thread with I/O or subprocess calls
+- Use .unwrap() in non-test, non-unreachable production code
+- Hardcode color values — reference the constants in app.rs
+- Use unsafe without explicit approval and a safety comment
+
+### Python-specific
+- Import from LangChain, LlamaIndex, or abstraction frameworks
+- Log, print, or return raw API key values
 - Write agent output outside <vault>/Agents/
-- Use dict where a dataclass is clearer
-- Skip type hints for brevity
-- Suggest switching the vector DB, embedding model, or metadata store
-- Add new methods to LLMProvider base without updating all implementations
 - Break idempotent ingest behavior
-
----
-
-## Rust Extension (twin_core)
-
-The chunking hot path lives in twin_core/ as a PyO3-compiled Rust extension.
-
-### The boundary rule
-Rust receives plain strings, returns plain data.
-It does not touch LanceDB, SQLite, the filesystem, or any Python objects
-beyond what PyO3 marshals automatically.
-
-### Fallback import (parser.py)
-```python
-try:
-    from twin_core import Chunk, chunk_text as _rust_chunk_text
-    _USE_RUST = True
-except ImportError:
-    _USE_RUST = False
-```
-The Python fallback must remain correct and tested. Never remove it.
-
-### Build
-```bash
-cd twin_core && uv run maturin develop  # dev
-cd twin_core && uv run maturin build --release  # production
-```
-
-### Tests
-The Python test suite (test_parser.py) is the correctness source of truth.
-The Rust implementation must pass all existing parser tests.
+- Skip type hints for brevity
 
 ---
 
 ## Config Environment Variables
 
 ```
-TWIN_DATA_DIR          where LanceDB, SQLite, keychain live — default: ~/.twin
-TWIN_EMBED_MODEL       embedding model — default: nomic-ai/nomic-embed-text-v1.5
-TWIN_CHUNK_TOKENS      max tokens per chunk — default: 512
-TWIN_OVERLAP           overlap tokens — default: 64
-TWIN_TOP_K             results per query — default: 5
-TWIN_PROVIDER          active LLM provider — default: anthropic
-TWIN_OLLAMA_URL        Ollama base URL — default: http://localhost:11434
+TWIN_DATA_DIR               ~/.twin (LanceDB, SQLite, keychain)
+TWIN_EMBED_MODEL            nomic-ai/nomic-embed-text-v1.5
+TWIN_CHUNK_TOKENS           512
+TWIN_OVERLAP                64
+TWIN_TOP_K                  5
+TWIN_PROVIDER               anthropic
+TWIN_OLLAMA_URL             http://localhost:11434
+TWIN_GRAPH_VECTOR_WEIGHT    0.7
+TWIN_GRAPH_PROXIMITY_WEIGHT 0.3
 
 # API keys (fallback if not in keychain)
 ANTHROPIC_API_KEY
@@ -496,15 +496,39 @@ GEMINI_API_KEY
 OPENROUTER_API_KEY
 ```
 
-Note: SECONDBRAIN_* variable names from earlier phases are deprecated.
-Use TWIN_* going forward. Maintain backward-compatible fallback reads during Phase 2.
+---
+
+## Rust Extension (twin_core)
+
+### The boundary rule
+twin_core is the PyO3 bridge. It receives plain strings, returns plain data.
+It does NOT appear in twin-ui's dependencies. twin-ui never imports twin_core.
+twin_core is only used by the Python package (twin/).
+
+### Fallback import in parser.py
+```python
+try:
+    from twin_core import Chunk, chunk_text as _rust_chunk_text
+    _USE_RUST = True
+except ImportError:
+    _USE_RUST = False
+```
+Never remove the Python fallback.
+
+### Build
+```bash
+# From workspace root:
+cd twin-core && uv run maturin develop   # dev
+cd twin-core && uv run maturin build --release  # production
+```
 
 ---
 
-## Phase 3 Preview (do not implement yet)
+## Phase 4 Preview (do not implement)
 
-- Prebuilt native binaries via PyApp + GitHub Actions release workflow
-- Graph-aware retrieval using the wikilink link_targets metadata
-- Tag-based query filtering (twin query --tag #project/twin)
-- Homebrew / winget / scoop packaging
-- Agent memory across sessions
+- Persistent chat history across sessions
+- Plugin API for third-party agent tools
+- Multi-location sync (pluggable backends: S3, self-hosted, hosted tier)
+- Mobile companion app
+- Voice input via Whisper
+- Tag-based query filtering
