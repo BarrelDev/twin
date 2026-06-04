@@ -1,0 +1,3 @@
+[workspace]
+members = ["twin_core", "twin_ui"]
+resolver = "2"
