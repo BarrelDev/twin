@@ -1,7 +1,7 @@
 use tokio::io::AsyncRead;
 use tokio::task;
 
-enum CMD {
+pub enum CMD {
     Ingest(String),
     Query(String),
     RAG(String, u8),
