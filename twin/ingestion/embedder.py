@@ -1,6 +1,6 @@
 from sentence_transformers import SentenceTransformer
 
-from twin.config import AppConfig, EmbeddingModel
+from twin.config import AppConfig
 
 _DOCUMENT_PREFIX = "search_document: "
 _QUERY_PREFIX = "search_query: "
