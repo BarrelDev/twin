@@ -1,17 +1,10 @@
-import hashlib
-import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.live import Live
-from rich.table import Table
-from rich.text import Text
 
 from twin.config import AppConfig, Provider
 from twin.config_manager import ConfigManager
-from twin.usage import UsageLogger, format_session_summary
 
 app = typer.Typer(name="twin", help="Local-first semantic search for personal notes")
 config_app = typer.Typer(help="Manage Twin configuration and API keys")
@@ -92,6 +85,8 @@ def _ingest_url_content(url: str, config: AppConfig) -> None:
         url: HTTP or HTTPS URL to ingest.
         config: Runtime AppConfig.
     """
+    from datetime import datetime, timezone
+
     from twin.ingestion.url import ingest_url
     from twin.ingestion.embedder import build_embedder
     from twin.storage.vector import VectorStore
@@ -138,6 +133,9 @@ def _ingest_pdf_file(path: Path, config: AppConfig) -> None:
         path: Path to the PDF file.
         config: Runtime AppConfig.
     """
+    import hashlib
+    from datetime import datetime, timezone
+
     from twin.ingestion.pdf import parse_pdf
     from twin.ingestion.embedder import build_embedder
     from twin.storage.vector import VectorStore
@@ -189,6 +187,9 @@ def ingest(
     as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format.")
 ) -> None:
     """Ingest Markdown files, a PDF, or a URL into the knowledge base."""
+    import hashlib
+    from datetime import datetime, timezone
+
     from rich.progress import track
 
     config = AppConfig.from_env()
@@ -306,10 +307,16 @@ def rag(
 ) -> None:
     """Synthesize an answer from retrieved context using an LLM."""
     import asyncio
+    import json
+
+    from rich.live import Live
+    from rich.text import Text
+
     from twin.ingestion.embedder import build_embedder
     from twin.storage.vector import VectorStore
     from twin.query.retriever import Retriever
     from twin.rag.pipeline import RAGPipeline
+    from twin.usage import format_session_summary
 
     config = AppConfig.from_env()
     cm = ConfigManager()
@@ -371,11 +378,16 @@ def agent(
 ) -> None:
     """Invoke the agent to complete a multi-step task over the knowledge base."""
     import asyncio
+    import json
+
+    from rich.live import Live
+
     from twin.ingestion.embedder import build_embedder
     from twin.storage.vector import VectorStore
     from twin.query.retriever import Retriever
     from twin.agent.runtime import AgentRuntime
     from twin.agent.tools import ToolDispatcher
+    from twin.usage import format_session_summary
 
     config = AppConfig.from_env()
     cm = ConfigManager()
@@ -488,7 +500,12 @@ def agent(
 @app.command()
 def usage(as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format.")) -> None:
     """Show token and cost summary by provider and day."""
+    import json
     from collections import defaultdict
+
+    from rich.table import Table
+
+    from twin.usage import UsageLogger
 
     config = AppConfig.from_env()
     log = UsageLogger(config.data_dir)
@@ -561,6 +578,7 @@ def watch(
     as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format."),
 ) -> None:
     """Watch an Obsidian vault for changes and re-ingest modified .md files."""
+    import json
     import os
     import time
 
@@ -690,6 +708,8 @@ def config_set_key() -> None:
     """Interactively set an API key for a provider (key is never echoed)."""
     import getpass
 
+    from twin.config_manager import ConfigManager
+
     providers = [p.value for p in Provider if p != Provider.OLLAMA]
     console.print("[bold]Providers:[/bold] " + ", ".join(providers))
 
@@ -719,6 +739,8 @@ def config_remove_key(
     provider: str = typer.Argument(..., help="Provider name (e.g. openai)"),
 ) -> None:
     """Remove a provider's API key from the keychain."""
+    from twin.config_manager import ConfigManager
+
     try:
         p = Provider(provider.lower())
     except ValueError:
@@ -735,6 +757,8 @@ def config_set_provider(
     provider: str = typer.Argument(..., help="Provider to activate (e.g. openai)"),
 ) -> None:
     """Set the active LLM provider."""
+    from twin.config_manager import ConfigManager
+
     try:
         p = Provider(provider.lower())
     except ValueError:
@@ -752,6 +776,8 @@ def config_set_model(
     model: str = typer.Argument(..., help="Model identifier to use as default"),
 ) -> None:
     """Set the default model for the active provider."""
+    from twin.config_manager import ConfigManager
+
     cm = ConfigManager()
     provider = cm.get_active_provider()
     cm.set_model(provider, model)
@@ -761,6 +787,12 @@ def config_set_model(
 @config_app.command("list")
 def config_list(as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format.")) -> None:
     """Show current configuration. Never reveals API key values."""
+    import json
+
+    from rich.table import Table
+
+    from twin.config_manager import ConfigManager
+
     cm = ConfigManager()
     info = cm.list_config()
 
@@ -808,6 +840,10 @@ def config_list_models(
     as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format."),
 ) -> None:
     """List available models for the active provider."""
+    import json
+
+    from twin.config_manager import ConfigManager
+
     cm = ConfigManager()
     llm = _build_provider(cm, provider)
     models = llm.list_models()
@@ -829,7 +865,7 @@ def config_list_models(
             })
         console.print(json.dumps(data))
         return
-    
+
     console.print(f"\n[bold]Available models:[/bold]")
     for m in models:
         console.print(f"  [cyan]•[/cyan] {m}")
