@@ -338,7 +338,7 @@ def rag(
             for src in sources:
                 path = Path(src["path"]).name
                 heading = " > ".join(src["heading_path"]) if src["heading_path"] else ""
-                data["sources"].add({
+                data["sources"].append({
                     "path" : path,
                     "heading" : heading,
                 })
@@ -759,10 +759,29 @@ def config_set_model(
 
 
 @config_app.command("list")
-def config_list() -> None:
+def config_list(as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format.")) -> None:
     """Show current configuration. Never reveals API key values."""
     cm = ConfigManager()
     info = cm.list_config()
+
+    if as_json:
+        data = {
+            "active_provider" : info['active_provider'],
+            "vault_path" : info['vault_path'],
+            "providers": [],
+        }
+        for name, details in info["providers"].items():
+            key_cell = details["key_configured"]
+            source = details.get("key_source") or "—"
+            model = details.get("model") or "—"
+            data["providers"].append({
+                "key_configured" : key_cell,
+                "source" : source,
+                "model" : model
+            })
+        console.print(json.dumps(data))
+        return
+
 
     console.print(f"\n[bold]Active provider:[/bold] {info['active_provider']}")
     if info.get("vault_path"):
@@ -786,6 +805,7 @@ def config_list() -> None:
 @config_app.command("list-models")
 def config_list_models(
     provider: str | None = typer.Option(None, "--provider", "-p", help="Provider to query (default: active)"),
+    as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format."),
 ) -> None:
     """List available models for the active provider."""
     cm = ConfigManager()
@@ -793,9 +813,23 @@ def config_list_models(
     models = llm.list_models()
 
     if not models:
+        if as_json:
+            console.print("[]")
+            return
         console.print("[yellow]No models returned by provider.[/yellow]")
         return
 
+    if as_json:
+        data = []
+        for m in models:
+            data.append({
+                "model_id" : m.model_id,
+                "name" : m.name,
+                "supports_tools" : m.supports_tools
+            })
+        console.print(json.dumps(data))
+        return
+    
     console.print(f"\n[bold]Available models:[/bold]")
     for m in models:
         console.print(f"  [cyan]•[/cyan] {m}")
