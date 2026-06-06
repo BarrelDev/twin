@@ -2,6 +2,10 @@
 
 **Twin** is a local-first knowledge OS with semantic search, RAG, and agent execution. It ingests Markdown notes, PDFs, and URLs into a local vector store and lets you query them with natural language or run multi-step agents that reason across your knowledge base — supporting five LLM providers with an encrypted local keychain.
 
+## How to Use
+
+Details on how to use or build the project can be found at [HOW_TO_USE.md]()
+
 ---
 
 ## What It Does
@@ -16,16 +20,20 @@ Done. Ingested research.pdf (18 chunks).
 
 $ twin ingest https://example.com/article
 Done. Ingested URL (6 chunks).
+```
 
-# Semantic search — no API key needed
+### Semantic search — no API key needed
+```
 $ twin query "What did I write about the Rust ownership model?"
 ┌───┬───────┬───────────────────────┬──────────────────────────────────┐
 │ # │ Score │ Source                │ Text                             │
 ├───┼───────┼───────────────────────┼──────────────────────────────────┤
 │ 1 │ 0.91  │ rust.md › Ownership  │ "Ownership in Rust is the..."    │
 └───┴───────┴───────────────────────┴──────────────────────────────────┘
+```
 
-# RAG: streamed answer grounded in your notes
+### RAG: streamed answer grounded in your notes
+```
 $ twin rag "What is the Rust ownership model?"
 Rust's ownership model gives each value a single owner. When the owner
 goes out of scope, the value is dropped automatically...
@@ -45,8 +53,9 @@ Based on your notes, async Rust centers on the Future trait...
 
 Tool calls made: 2
 2 calls · 890 tokens · ~$0.005
-
-# Manage API keys — stored encrypted, never printed
+```
+### Manage API keys — stored encrypted, never printed
+```
 $ twin config set-key
 Providers: anthropic, openai, gemini, openrouter
 Provider: anthropic
@@ -119,125 +128,6 @@ Markdown / PDF / URL
 
 ---
 
-## Design Decisions
-
-### No abstraction frameworks
-
-Zero LangChain, LlamaIndex, or similar. Every component is a thin wrapper around its underlying library — LanceDB, sentence-transformers, SQLite, provider SDKs.
-
-**Why:** Abstractions obscure what's happening during retrieval, make debugging harder, and add dependencies with frequent breaking changes. Every retrieval failure in Twin is traceable: query → embedding → ANN search → ranking → formatting. No framework magic in the path.
-
----
-
-### Embedding model selection (evidence-based)
-
-**Choice:** `nomic-ai/nomic-embed-text-v1.5` (768 dimensions)
-
-Benchmarked against the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard). Ranks top 5 for retrieval tasks among locally-runnable models. The model requires task-specific prefixes — `search_document:` for ingestion, `search_query:` for queries — which Twin applies explicitly because the distinction is measurable in retrieval quality.
-
----
-
-### Provider-agnostic LLM interface
-
-`llm/base.py` defines an abstract `LLMProvider` with four methods: `complete()`, `stream()`, `estimate_cost()`, and `list_models()`. All are async. Five concrete implementations ship with Phase 2: Anthropic, OpenAI, Gemini, Ollama, and OpenRouter.
-
-Provider resolution order: `--provider` flag → `config.json` → `TWIN_PROVIDER` env var → Anthropic.
-
-The runtime always appends messages in Anthropic content-block format; non-Anthropic providers convert internally in their `complete()` method. The agent runtime and RAG pipeline have zero provider-specific code.
-
----
-
-### Encrypted machine-bound keychain
-
-API keys are stored encrypted in `~/.twin/keychain.enc` using AES-256-GCM. The encryption key is derived from `username:machine_id` via PBKDF2-SHA256 (480,000 iterations) — intentionally non-portable. Keys are never printed, logged, or returned anywhere in the codebase.
-
-Resolution order: keychain → environment variable → descriptive error with onboarding instructions.
-
----
-
-### Idempotent ingestion
-
-Running `ingest` twice on unchanged content produces no changes. SHA-256 hashes of file content (or URL content) are stored in the SQLite registry. On re-ingest: hash match → skip; hash changed → delete old chunks, insert new ones.
-
----
-
-### Obsidian-native parsing
-
-All `.md` files go through the Obsidian-aware parser. Non-vault Markdown simply yields empty `link_targets` and `tags`. The parser:
-- Extracts `[[Note Name]]` and `[[Note Name|Alias]]` → `link_targets` (note names, deduplicated)
-- Extracts `#tags` and `#nested/child` from the body (not YAML frontmatter)
-- Strips `![[embed.png]]` from chunk text
-- Converts wikilinks to plain text for embedding
-- Preserves full YAML frontmatter as structured metadata in SQLite
-
----
-
-### Hard vault boundary
-
-`write_vault_note` enforces that agent output never escapes `<vault>/Agents/`. The path is sanitized (slashes and control characters replaced), then a `relative_to` boundary check is applied as defense-in-depth. The constraint is at the path level, not a convention.
-
----
-
-### Rust for the chunking hot path
-
-Chunking and token counting live in `twin_core/` — a Rust crate exposed via PyO3 bindings. The boundary is clean: Rust receives plain strings, returns text + offsets. It does not touch LanceDB, SQLite, the filesystem, or any Python objects. Same pattern as Hugging Face tokenizers.
-
----
-
-### Chunking parameters (documented, not magic)
-
-| Parameter | Value | Reason |
-|---|---|---|
-| Max chunk tokens | 512 | Precision vs. context trade-off — smaller is sharper |
-| Overlap tokens | 64 | Prevents context loss at chunk boundaries |
-| Primary split | Markdown headings | Semantic units, not arbitrary length |
-| Secondary split | Paragraph breaks | Natural prose boundaries |
-
----
-
-## Current Status
-
-### Phase 0 — Complete ✓
-
-| Module | Description |
-|---|---|
-| `ingestion/parser.py` | Heading-aware chunking, overlap, frontmatter extraction |
-| `ingestion/embedder.py` | nomic-embed-text-v1.5, document + query prefix handling |
-| `storage/vector.py` | LanceDB schema, ANN search, source filtering, persistence |
-| `storage/metadata.py` | SQLite document registry, SHA-256 hash dedup |
-| `query/retriever.py` | Search orchestration, result ranking, Rich output |
-| `cli.py` | `twin ingest` + `twin query` end-to-end |
-| `twin_core/` | Rust crate for chunking + token counting (PyO3) |
-
-### Phase 1 — Complete ✓
-
-| Component | File |
-|---|---|
-| LLM provider abstraction | `llm/base.py`, `llm/anthropic.py` |
-| Context formatter | `rag/context.py` |
-| RAG pipeline | `rag/pipeline.py` |
-| KB search tool + dispatch | `agent/tools.py` |
-| Agent runtime | `agent/runtime.py` |
-| Activity log | `agent/log.py` |
-| CLI: `twin rag`, `twin agent` | `cli.py` |
-
-### Phase 2 — Complete ✓
-
-| Component | File |
-|---|---|
-| Encrypted keychain + config manager | `config_manager.py` |
-| Config CLI (`set-key`, `set-provider`, `set-model`, `list`, `list-models`, `remove-key`) | `cli.py` |
-| OpenAI, Gemini, Ollama, OpenRouter providers | `llm/openai.py`, `llm/gemini.py`, `llm/ollama.py`, `llm/openrouter.py` |
-| Streaming (`twin rag`, `twin agent` final answer) | `rag/pipeline.py`, `agent/runtime.py` |
-| PDF ingestion | `ingestion/pdf.py` |
-| URL ingestion | `ingestion/url.py` |
-| Obsidian parser (wikilinks, tags, frontmatter) | `ingestion/obsidian.py` |
-| Vault writer (`write_vault_note` agent tool) | `agent/tools.py` |
-| Vault watcher (`twin watch`) | `ingestion/obsidian.py`, `cli.py` |
-| Token/cost tracking + `twin usage` | `usage.py`, `cli.py` |
-
----
-
 ## Tech Stack
 
 | Concern | Choice |
@@ -304,106 +194,69 @@ twin_core/
 
 ---
 
-## Build and Run
+## Notable Design Decisions
 
-### Requirements
+### No abstraction frameworks
 
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv) (fast Python package manager)
-- Rust toolchain (`rustup`) — required to build `twin_core`
-- An API key for at least one LLM provider, **or** [Ollama](https://ollama.com) for fully local operation
+Zero LangChain, LlamaIndex, or similar. Every component is a thin wrapper around its underlying library — LanceDB, sentence-transformers, SQLite, provider SDKs.
 
-### Install
+**Why:** Abstractions obscure what's happening during retrieval, make debugging harder, and add dependencies with frequent breaking changes. Every retrieval failure in Twin is traceable: query → embedding → ANN search → ranking → formatting. No framework magic in the path.
 
-```bash
-git clone https://github.com/BarrelDev/twin
-cd twin
 
-uv sync
+### Embedding model selection (evidence-based)
 
-cd twin_core
-pip install maturin
-maturin develop
-cd ..
-```
+**Choice:** `nomic-ai/nomic-embed-text-v1.5` (768 dimensions)
 
-> Alternatively, run `setup.bat` (Windows) or `setup.sh` (Unix-based) to do all of the above in one step.
+Benchmarked against the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard). Ranks top 5 for retrieval tasks among locally-runnable models. The model requires task-specific prefixes — `search_document:` for ingestion, `search_query:` for queries — which Twin applies explicitly because the distinction is measurable in retrieval quality.
 
-> The first run downloads `nomic-embed-text-v1.5` (~270 MB) from Hugging Face. It is cached after that.
 
-### Set up an API key
+### Provider-agnostic LLM interface
 
-```bash
-twin config set-key
-# Follow the prompt — key is stored encrypted, never echoed
+`llm/base.py` defines an abstract `LLMProvider` with four methods: `complete()`, `stream()`, `estimate_cost()`, and `list_models()`. All are async. Five concrete implementations ship with Phase 2: Anthropic, OpenAI, Gemini, Ollama, and OpenRouter.
 
-# Or, use an environment variable as a fallback
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
+Provider resolution order: `--provider` flag → `config.json` → `TWIN_PROVIDER` env var → Anthropic.
 
-To use a local model with no API key:
-
-```bash
-twin config set-provider ollama
-twin config set-model llama3.2
-```
-
-### Run
-
-```bash
-twin ingest ./notes                                     # index Markdown
-twin ingest research.pdf                                # index PDF
-twin ingest https://example.com/article                 # index URL
-
-twin query "What did I write about Rust lifetimes?"    # semantic search
-twin rag "What is the Rust ownership model?"           # RAG answer
-twin agent "Summarize my notes on async Rust"          # agent
-
-twin config list                                       # show active provider and keys
-twin config set-provider gemini                        # switch provider
-twin usage                                             # show token/cost history
-
-twin watch ~/my-vault                                  # watch Obsidian vault
-```
-
-### Run tests
-
-```bash
-uv run pytest tests/ -v --cov=twin --cov-report=term-missing
-```
+The runtime always appends messages in Anthropic content-block format; non-Anthropic providers convert internally in their `complete()` method. The agent runtime and RAG pipeline have zero provider-specific code.
 
 ---
 
-## Configuration
+### Encrypted machine-bound keychain
 
-Settings are read from `TWIN_*` environment variables. `SECONDBRAIN_*` names are supported as a deprecated fallback.
+API keys are stored encrypted in `~/.twin/keychain.enc` using AES-256-GCM. The encryption key is derived from `username:machine_id` via PBKDF2-SHA256 (480,000 iterations) — intentionally non-portable. Keys are never printed, logged, or returned anywhere in the codebase.
 
-| Variable | Default | Description |
+Resolution order: keychain → environment variable → descriptive error with onboarding instructions.
+
+
+### Idempotent ingestion
+
+Running `ingest` twice on unchanged content produces no changes. SHA-256 hashes of file content (or URL content) are stored in the SQLite registry. On re-ingest: hash match → skip; hash changed → delete old chunks, insert new ones.
+
+
+### Obsidian-native parsing
+
+All `.md` files go through the Obsidian-aware parser. Non-vault Markdown simply yields empty `link_targets` and `tags`. The parser:
+- Extracts `[[Note Name]]` and `[[Note Name|Alias]]` → `link_targets` (note names, deduplicated)
+- Extracts `#tags` and `#nested/child` from the body (not YAML frontmatter)
+- Strips `![[embed.png]]` from chunk text
+- Converts wikilinks to plain text for embedding
+- Preserves full YAML frontmatter as structured metadata in SQLite
+
+
+### Hard vault boundary
+
+`write_vault_note` enforces that agent output never escapes `<vault>/Agents/`. The path is sanitized (slashes and control characters replaced), then a `relative_to` boundary check is applied as defense-in-depth. The constraint is at the path level, not a convention.
+
+
+### Rust for the chunking hot path
+
+Chunking and token counting live in `twin_core/` — a Rust crate exposed via PyO3 bindings. The boundary is clean: Rust receives plain strings, returns text + offsets. It does not touch LanceDB, SQLite, the filesystem, or any Python objects. Same pattern as Hugging Face tokenizers.
+
+
+### Chunking parameters (documented, not magic)
+
+| Parameter | Value | Reason |
 |---|---|---|
-| `TWIN_DATA_DIR` | `~/.twin` | Where LanceDB, SQLite, keychain, and usage log are stored |
-| `TWIN_EMBED_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | Embedding model |
-| `TWIN_CHUNK_TOKENS` | `512` | Max tokens per chunk |
-| `TWIN_OVERLAP` | `64` | Overlap tokens between chunks |
-| `TWIN_TOP_K` | `5` | Results returned per query |
-| `TWIN_PROVIDER` | `anthropic` | Active LLM provider (fallback if not set in config.json) |
-| `TWIN_OLLAMA_URL` | `http://localhost:11434` | Ollama base URL |
-| `ANTHROPIC_API_KEY` | — | Anthropic key fallback (keychain takes priority) |
-| `OPENAI_API_KEY` | — | OpenAI key fallback |
-| `GEMINI_API_KEY` | — | Gemini key fallback |
-| `OPENROUTER_API_KEY` | — | OpenRouter key fallback |
-
----
-
-## Engineering Highlights
-
-**Systems thinking:** Idempotent data pipelines (SHA-256 hash dedup), compute hot path optimization (Rust via PyO3), provider abstraction designed for multi-vendor extensibility, and a machine-bound encrypted keychain. Phase 2 added four LLM providers, three ingestion formats, vault watching, and streaming without touching the retrieval core.
-
-**Evidence-based decisions:** Embedding model selection backed by MTEB benchmark rankings. Chunking parameters documented as constants with justification. Provider pricing tables maintained per-model for accurate cost attribution.
-
-**Composition over frameworks:** Every layer is independently testable. The retriever, pipeline, and agent runtime can each be instantiated with mock dependencies. No global state, no framework side-channels.
-
-**Security by design:** API keys are never logged, printed, or returned anywhere in the codebase. The vault boundary enforced at path level (not convention). Path traversal sanitization with defense-in-depth boundary check. All key material machine-bound and non-portable.
-
-**Full-stack capability:** Python application layer, Rust extension for compute-bound work, SQL data pipeline, five LLM API integrations, streaming I/O, filesystem watching, encrypted local storage, CLI tooling.
-
-**Type discipline:** 100% type-annotated function signatures across the codebase. Types serve as documentation and catch bugs before runtime.
+| Max chunk tokens | 512 | Precision vs. context trade-off — smaller is sharper |
+| Overlap tokens | 64 | Prevents context loss at chunk boundaries |
+| Primary split | Markdown headings | Semantic units, not arbitrary length |
+| Secondary split | Paragraph breaks | Natural prose boundaries |
