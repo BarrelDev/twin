@@ -1,3 +1,3 @@
-mod dashboard;
-mod source_chip;
-mod streaming_text;
+pub mod dashboard;
+pub mod source_chip;
+pub mod streaming_text;
