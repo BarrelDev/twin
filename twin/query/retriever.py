@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -78,3 +79,24 @@ class Retriever:
             table.add_row(str(i + 1), "{:.2f}".format(q.score), source, q.text.replace("\n", " ")[:120])
 
         return table
+    
+    def results_as_json_str(self, results: list[QueryResult]) -> str:
+        """
+        Render a list of QueryResult as a JSON string.
+
+        Args:
+            results: Ranked list of QueryResult from query().
+
+        Returns:
+            JSON string: [{"text": str, "source": str, "score": float, "heading_path": [str]}]
+        """
+        data = []
+        for q in results:
+            source = Path(q.source_path).name + " › " + " › ".join(q.heading_path)
+            data.append({
+                "text": q.text,
+                "source": source,
+                "score": q.score,
+                "heading_path": q.heading_path
+            })
+        return json.dumps(data)

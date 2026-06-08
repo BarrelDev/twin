@@ -1,17 +1,10 @@
-import hashlib
-import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.live import Live
-from rich.table import Table
-from rich.text import Text
 
 from twin.config import AppConfig, Provider
 from twin.config_manager import ConfigManager
-from twin.usage import UsageLogger, format_session_summary
 
 app = typer.Typer(name="twin", help="Local-first semantic search for personal notes")
 config_app = typer.Typer(help="Manage Twin configuration and API keys")
@@ -92,6 +85,8 @@ def _ingest_url_content(url: str, config: AppConfig) -> None:
         url: HTTP or HTTPS URL to ingest.
         config: Runtime AppConfig.
     """
+    from datetime import datetime, timezone
+
     from twin.ingestion.url import ingest_url
     from twin.ingestion.embedder import build_embedder
     from twin.storage.vector import VectorStore
@@ -138,6 +133,9 @@ def _ingest_pdf_file(path: Path, config: AppConfig) -> None:
         path: Path to the PDF file.
         config: Runtime AppConfig.
     """
+    import hashlib
+    from datetime import datetime, timezone
+
     from twin.ingestion.pdf import parse_pdf
     from twin.ingestion.embedder import build_embedder
     from twin.storage.vector import VectorStore
@@ -186,8 +184,12 @@ def _ingest_pdf_file(path: Path, config: AppConfig) -> None:
 def ingest(
     path: str = typer.Argument(..., help="Path to notes folder, file (.md/.pdf), or URL"),
     type_: str | None = typer.Option(None, "--type", help="Force format: url, pdf, or md"),
+    as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format.")
 ) -> None:
     """Ingest Markdown files, a PDF, or a URL into the knowledge base."""
+    import hashlib
+    from datetime import datetime, timezone
+
     from rich.progress import track
 
     config = AppConfig.from_env()
@@ -257,16 +259,23 @@ def ingest(
         ingested += 1
         total_chunks += len(chunks)
 
-    console.print(
-        f"[green]Done.[/green] "
-        f"Ingested [bold]{ingested}[/bold] files "
-        f"([bold]{total_chunks}[/bold] chunks). "
-        f"Skipped [bold]{skipped}[/bold] unchanged."
-    )
+    if as_json:
+        out = f'[{ "ingest": ingested, "num_chunks": total_chunks, "num_unchanged": skipped }]'
+        console.print(out)
+    else:
+        console.print(
+            f"[green]Done.[/green] "
+            f"Ingested [bold]{ingested}[/bold] files "
+            f"([bold]{total_chunks}[/bold] chunks). "
+            f"Skipped [bold]{skipped}[/bold] unchanged."
+        )
 
 
 @app.command()
-def query(q: str = typer.Argument(..., help="Natural-language query")) -> None:
+def query(
+    q: str = typer.Argument(..., help="Natural-language query"), 
+    as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format."),
+) -> None:
     """Query the knowledge base with natural language."""
     from twin.ingestion.embedder import build_embedder
     from twin.storage.vector import VectorStore
@@ -277,6 +286,10 @@ def query(q: str = typer.Argument(..., help="Natural-language query")) -> None:
     embedder = build_embedder(config)
     retriever = Retriever(store, embedder)
     results = retriever.query(q, k=config.top_k)
+
+    if as_json:
+        console.print(retriever.results_as_json_str(results))
+        return
 
     if not results:
         console.print("[yellow]No results found.[/yellow]")
@@ -290,13 +303,20 @@ def rag(
     q: str = typer.Argument(..., help="Natural-language query for RAG synthesis"),
     k: int = typer.Option(5, "--top-k", "-k", help="Number of chunks to retrieve"),
     provider: str | None = typer.Option(None, "--provider", "-p", help="LLM provider override"),
+    as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format."),
 ) -> None:
     """Synthesize an answer from retrieved context using an LLM."""
     import asyncio
+    import json
+
+    from rich.live import Live
+    from rich.text import Text
+
     from twin.ingestion.embedder import build_embedder
     from twin.storage.vector import VectorStore
     from twin.query.retriever import Retriever
     from twin.rag.pipeline import RAGPipeline
+    from twin.usage import format_session_summary
 
     config = AppConfig.from_env()
     cm = ConfigManager()
@@ -317,6 +337,22 @@ def rag(
         return full_text, sources
 
     full_text, sources = asyncio.run(_stream())
+    summary = format_session_summary(pipeline.session_records)
+
+    if as_json:
+        data = { "sources": [], "summary": "" }
+        if sources:
+            for src in sources:
+                path = Path(src["path"]).name
+                heading = " > ".join(src["heading_path"]) if src["heading_path"] else ""
+                data["sources"].append({
+                    "path" : path,
+                    "heading" : heading,
+                })
+        if summary:
+            data["summary"] = summary
+        console.print(json.dumps(data))
+        return
 
     if sources:
         console.print("\n[bold]Sources:[/bold]")
@@ -328,7 +364,6 @@ def rag(
                 line.append(f"  {heading}", style="dim")
             console.print(line)
 
-    summary = format_session_summary(pipeline.session_records)
     if summary:
         console.print(f"\n[dim]{summary}[/dim]")
 
@@ -339,14 +374,20 @@ def agent(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full activity log"),
     max_iterations: int = typer.Option(5, "--max-iter", help="Max tool calls before forced termination"),
     provider: str | None = typer.Option(None, "--provider", "-p", help="LLM provider override"),
+    as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format."),
 ) -> None:
     """Invoke the agent to complete a multi-step task over the knowledge base."""
     import asyncio
+    import json
+
+    from rich.live import Live
+
     from twin.ingestion.embedder import build_embedder
     from twin.storage.vector import VectorStore
     from twin.query.retriever import Retriever
     from twin.agent.runtime import AgentRuntime
     from twin.agent.tools import ToolDispatcher
+    from twin.usage import format_session_summary
 
     config = AppConfig.from_env()
     cm = ConfigManager()
@@ -373,6 +414,8 @@ def agent(
         async for event in runtime.execute_stream(task):
             if event["type"] == "tool_call":
                 snippet = str(event.get("result", ""))[:80]
+                if as_json:
+                    continue
                 console.print(
                     f"  [cyan]iter {event['iteration']}[/cyan] "
                     f"[yellow]→[/yellow] {event['name']}  "
@@ -385,14 +428,49 @@ def agent(
                 activity_log = event["activity_log"]
 
         full_text = ""
-        with Live("", console=console, refresh_per_second=20) as live:
+        if as_json:
             for part in token_parts:
                 full_text += part
-                live.update(full_text)
+        else:
+            with Live("", console=console, refresh_per_second=20) as live:
+                for part in token_parts:
+                    full_text += part
+                    live.update(full_text)
 
         return full_text, tool_calls_made, activity_log
 
     full_text, tool_calls_made, activity_log = asyncio.run(_run())
+
+    if as_json:
+        data = { "full_text" : full_text,
+                  "tool_calls_made" : tool_calls_made,
+                  "calls" : len(runtime.session_records), 
+                  "total_tokens" : sum(r.prompt_tokens + r.completion_tokens for r in runtime.session_records),
+                  "costs" : sum([r.estimated_cost_usd for r in runtime.session_records if r.estimated_cost_usd is not None]),
+                  "activity_log" : [],
+                }
+        for entry in activity_log:
+            event_type = entry.get("event_type", "")
+            iteration = entry.get("iteration", 0)
+            details = entry.get("details", {})
+            if event_type == "tool_call":
+                data["activity_log"].insert(iteration, 
+                                            {
+                                                "tool_name" : details.get('tool_name', ''),
+                                                "tool_input": {details.get('tool_input', '')}
+                                            })
+            elif event_type == "tool_result":
+                data["activity_log"].insert(iteration,
+                                            {
+                                                "result": details.get("result", "")
+                                            })
+            elif event_type == "final_answer":
+                data["activity_log"].insert(iteration,
+                                            {
+                                                "termination_reason" : "final_answer",
+                                            })
+        console.print(json.dumps(data))
+        return
 
     console.print(f"\n[dim]Tool calls made: {tool_calls_made}[/dim]")
 
@@ -420,15 +498,23 @@ def agent(
 
 
 @app.command()
-def usage() -> None:
+def usage(as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format.")) -> None:
     """Show token and cost summary by provider and day."""
+    import json
     from collections import defaultdict
+
+    from rich.table import Table
+
+    from twin.usage import UsageLogger
 
     config = AppConfig.from_env()
     log = UsageLogger(config.data_dir)
     records = log.read_all()
 
     if not records:
+        if as_json:
+            console.print("[]")
+            return
         console.print("[yellow]No usage data found.[/yellow]")
         return
 
@@ -436,6 +522,7 @@ def usage() -> None:
     groups: dict[tuple[str, str], dict] = defaultdict(
         lambda: {"calls": 0, "prompt": 0, "completion": 0, "cost": 0.0, "local": False}
     )
+
     for r in records:
         key = (r.timestamp[:10], r.provider)
         g = groups[key]
@@ -446,6 +533,21 @@ def usage() -> None:
             g["cost"] += r.estimated_cost_usd
         else:
             g["local"] = True
+
+    if as_json:
+        data = []
+        for (date, provider), g in sorted(groups.items()):
+            cost_str = "local" if g["local"] else f"${g['cost']:.4f}"
+            data.append({
+                "date" : date,
+                "provider" : provider,
+                "calls" : str(g["calls"]),
+                "prompt_tokens" : f"{g['prompt']:,}",
+                "completion_tokens" : f"{g['completion']:,}",
+                "est_cost" : cost_str
+            })
+        console.print(json.dumps(data))
+        return
 
     table = Table(show_header=True, header_style="bold")
     table.add_column("Date")
@@ -473,8 +575,10 @@ def usage() -> None:
 def watch(
     vault_path: str | None = typer.Argument(None, help="Path to Obsidian vault root"),
     status: bool = typer.Option(False, "--status", help="Show watcher status and exit"),
+    as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format."),
 ) -> None:
     """Watch an Obsidian vault for changes and re-ingest modified .md files."""
+    import json
     import os
     import time
 
@@ -483,47 +587,102 @@ def watch(
     log_path = config.data_dir / "watcher.log"
 
     if status:
-        if not pid_file.exists():
-            console.print("[yellow]Watcher is not running.[/yellow]")
-            return
-        try:
-            pid = int(pid_file.read_text().strip())
-            os.kill(pid, 0)
-            console.print(f"[green]Watcher running.[/green] PID: {pid}")
-        except (ValueError, OSError):
-            console.print("[yellow]Watcher process not found (stale PID file).[/yellow]")
+        is_running = False
+        pid = None
+        message = ""
+
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                os.kill(pid, 0)
+                is_running = True
+                message = f"Watcher running. PID: {pid}"
+            except (ValueError, OSError):
+                message = "Watcher process not found (stale PID file)."
+        else:
+            message = "Watcher is not running."
+
+        if as_json:
+            data = {
+                "running": is_running,
+                "pid": pid,
+                "log_path": str(log_path),
+                "message": message,
+            }
+            console.print(json.dumps(data))
+        else:
+            if is_running:
+                console.print(f"[green]Watcher running.[/green] PID: {pid}")
+            else:
+                console.print(f"[yellow]{message}[/yellow]")
         return
 
     if not vault_path:
-        console.print(
-            "[red]Error:[/red] vault path required. Usage: twin watch <vault-path>"
-        )
+        if as_json:
+            error_data = {
+                "success": False,
+                "error": "vault path required",
+                "message": "Usage: twin watch <vault-path>",
+            }
+            console.print(json.dumps(error_data))
+        else:
+            console.print(
+                "[red]Error:[/red] vault path required. Usage: twin watch <vault-path>"
+            )
         raise typer.Exit(1)
 
     vault = Path(vault_path)
     if not vault.exists():
-        console.print(f"[red]Error:[/red] {vault_path} does not exist")
+        if as_json:
+            error_data = {
+                "success": False,
+                "error": "vault not found",
+                "vault_path": str(vault),
+                "message": f"{vault_path} does not exist",
+            }
+            console.print(json.dumps(error_data))
+        else:
+            console.print(f"[red]Error:[/red] {vault_path} does not exist")
         raise typer.Exit(1)
 
     try:
         from watchdog.observers import Observer
         from twin.ingestion.obsidian import VaultWatcher
-    except ImportError as e:
-        console.print("[red]Error:[/red] watchdog not installed. Run: uv add watchdog")
+    except ImportError:
+        if as_json:
+            error_data = {
+                "success": False,
+                "error": "watchdog not installed",
+                "message": "Run: uv add watchdog",
+            }
+            console.print(json.dumps(error_data))
+        else:
+            console.print("[red]Error:[/red] watchdog not installed. Run: uv add watchdog")
         raise typer.Exit(1)
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
-    pid_file.write_text(str(os.getpid()))
+    current_pid = os.getpid()
+    pid_file.write_text(str(current_pid))
 
     handler = VaultWatcher(vault, config, log_path=log_path)
     observer = Observer()
     observer.schedule(handler, str(vault), recursive=True)
     observer.start()
 
-    console.print(
-        f"[green]Watching[/green] {vault_path} for .md changes. "
-        f"Log: {log_path}  (Ctrl-C to stop)"
-    )
+    if as_json:
+        start_data = {
+            "success": True,
+            "pid": current_pid,
+            "vault_path": str(vault),
+            "log_path": str(log_path),
+            "message": f"Watching {vault_path} for .md changes",
+        }
+        console.print(json.dumps(start_data))
+    else:
+        console.print(
+            f"[green]Watching[/green] {vault_path} for .md changes. "
+            f"Log: {log_path}  (Ctrl-C to stop)"
+        )
 
     try:
         while True:
@@ -532,7 +691,14 @@ def watch(
         observer.stop()
         observer.join()
         pid_file.unlink(missing_ok=True)
-        console.print("\n[yellow]Watcher stopped.[/yellow]")
+        if as_json:
+            stop_data = {
+                "success": True,
+                "message": "Watcher stopped",
+            }
+            console.print(json.dumps(stop_data))
+        else:
+            console.print("\n[yellow]Watcher stopped.[/yellow]")
 
 
 # ── Config subcommands ───────────────────────────────────────────────────────
@@ -541,6 +707,8 @@ def watch(
 def config_set_key() -> None:
     """Interactively set an API key for a provider (key is never echoed)."""
     import getpass
+
+    from twin.config_manager import ConfigManager
 
     providers = [p.value for p in Provider if p != Provider.OLLAMA]
     console.print("[bold]Providers:[/bold] " + ", ".join(providers))
@@ -571,6 +739,8 @@ def config_remove_key(
     provider: str = typer.Argument(..., help="Provider name (e.g. openai)"),
 ) -> None:
     """Remove a provider's API key from the keychain."""
+    from twin.config_manager import ConfigManager
+
     try:
         p = Provider(provider.lower())
     except ValueError:
@@ -587,6 +757,8 @@ def config_set_provider(
     provider: str = typer.Argument(..., help="Provider to activate (e.g. openai)"),
 ) -> None:
     """Set the active LLM provider."""
+    from twin.config_manager import ConfigManager
+
     try:
         p = Provider(provider.lower())
     except ValueError:
@@ -604,6 +776,8 @@ def config_set_model(
     model: str = typer.Argument(..., help="Model identifier to use as default"),
 ) -> None:
     """Set the default model for the active provider."""
+    from twin.config_manager import ConfigManager
+
     cm = ConfigManager()
     provider = cm.get_active_provider()
     cm.set_model(provider, model)
@@ -611,10 +785,35 @@ def config_set_model(
 
 
 @config_app.command("list")
-def config_list() -> None:
+def config_list(as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format.")) -> None:
     """Show current configuration. Never reveals API key values."""
+    import json
+
+    from rich.table import Table
+
+    from twin.config_manager import ConfigManager
+
     cm = ConfigManager()
     info = cm.list_config()
+
+    if as_json:
+        data = {
+            "active_provider" : info['active_provider'],
+            "vault_path" : info['vault_path'],
+            "providers": [],
+        }
+        for name, details in info["providers"].items():
+            key_cell = details["key_configured"]
+            source = details.get("key_source") or "—"
+            model = details.get("model") or "—"
+            data["providers"].append({
+                "key_configured" : key_cell,
+                "source" : source,
+                "model" : model
+            })
+        console.print(json.dumps(data))
+        return
+
 
     console.print(f"\n[bold]Active provider:[/bold] {info['active_provider']}")
     if info.get("vault_path"):
@@ -638,14 +837,33 @@ def config_list() -> None:
 @config_app.command("list-models")
 def config_list_models(
     provider: str | None = typer.Option(None, "--provider", "-p", help="Provider to query (default: active)"),
+    as_json: bool = typer.Option(False, "--json", help="Outputs results in JSON string format."),
 ) -> None:
     """List available models for the active provider."""
+    import json
+
+    from twin.config_manager import ConfigManager
+
     cm = ConfigManager()
     llm = _build_provider(cm, provider)
     models = llm.list_models()
 
     if not models:
+        if as_json:
+            console.print("[]")
+            return
         console.print("[yellow]No models returned by provider.[/yellow]")
+        return
+
+    if as_json:
+        data = []
+        for m in models:
+            data.append({
+                "model_id" : m.model_id,
+                "name" : m.name,
+                "supports_tools" : m.supports_tools
+            })
+        console.print(json.dumps(data))
         return
 
     console.print(f"\n[bold]Available models:[/bold]")
