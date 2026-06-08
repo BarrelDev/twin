@@ -1,5 +1,5 @@
 use tokio::task;
-use std::process::Command;
+use std::{any, process::Command};
 
 pub enum CMD {
     Ingest(String),
@@ -12,29 +12,137 @@ pub enum CMD {
     ConfigListModels,
 }
 
-fn ingest_cmd (s: String) -> String {
-    let raw = Command::new("twin")
-                        .arg(format!("ingest {} --json", (s)))
-                        .output().expect("{}");
-    let stdout = str::from_utf8(&raw.stdout);
-    match stdout {
-        Ok(s) => s.to_owned(),
-        Err(_) => "{}".to_owned(),
+pub type CmdOut = anyhow::Result<String>;
+
+pub fn call_cli(cmd: CMD) -> tokio::task::JoinHandle<CmdOut> {
+    match cmd {
+        CMD::Ingest(path) => task::spawn_blocking(move || {
+                ingest_cmd(&path)
+            }),
+        CMD::Query(query) => task::spawn_blocking(move || {
+            query_cmd(&query)
+        }),
+        CMD::RAG(query, i) => task::spawn_blocking(move || {
+            rag_cmd(&query, i)
+        }),
+        CMD::Agent(query, i) => task::spawn_blocking(move || {
+            agent_cmd(&query, i)
+        }),
+        CMD::Usage => task::spawn_blocking(move || {
+            usage_cmd()
+        }),
+        CMD::Watch(path) => task::spawn_blocking(move || {
+            watch_cmd(&path)
+        }),
+        CMD::ConfigList => task::spawn_blocking(move || {
+            config_list_cmd()
+        }),
+        CMD::ConfigListModels => task::spawn_blocking(move || {
+            config_list_models_cmd()
+        })
     }
 }
 
-// Massive stub function rn
-// Just placed some nonesense for typecheck
-// need to implement calls to twin cli
-pub fn call_cli(cmd: CMD) -> tokio::task::JoinHandle<String> {
-    match cmd {
-        CMD::Ingest(s) => task::spawn(async { ingest_cmd(s) }),
-        CMD::Query(s) => task::spawn(async {"".to_owned()}),
-        CMD::RAG(s, i) => task::spawn(async {"".to_owned()}),
-        CMD::Agent(s, i) => task::spawn(async {"".to_owned()}),
-        CMD::Usage => task::spawn(async {"".to_owned()}),
-        CMD::Watch(s) => task::spawn(async {"".to_owned()}),
-        CMD::ConfigList => task::spawn(async {"".to_owned()}),
-        CMD::ConfigListModels => task::spawn(async {"".to_owned()})
-    }
+fn ingest_cmd (s: &str) -> CmdOut {
+    let raw = Command::new("twin")
+                        .args(&["ingest", s, "--json"])
+                        .output()?;
+
+    anyhow::ensure!(raw.status.success(),
+        "{}",
+        String::from_utf8_lossy(&raw.stderr)
+    );
+
+    Ok(String::from_utf8(raw.stdout)?)
+}
+
+fn query_cmd (s: &str) -> CmdOut {
+    let raw = Command::new("twin")
+                                .args(&["query", s, "--json"])
+                                .output()?;
+
+    anyhow::ensure!(raw.status.success(),
+        "{}",
+        String::from_utf8_lossy(&raw.stderr)
+    );
+
+    Ok(String::from_utf8(raw.stdout)?)
+}
+
+fn rag_cmd (s: &str, i: u8) -> CmdOut {
+    let raw = Command::new("twin")
+                                .args(&["rag", s, "-k", &i.to_string(), "--json"])
+                                .output()?;
+
+    anyhow::ensure!(raw.status.success(),
+        "{}",
+        String::from_utf8_lossy(&raw.stderr)
+    );
+
+    Ok(String::from_utf8(raw.stdout)?)
+}
+
+fn agent_cmd (s: &str, i: u8) -> CmdOut {
+    let raw = Command::new("twin")
+                                .args(&["agent", s, "-k", &i.to_string(), "--json"])
+                                .output()?;
+
+    anyhow::ensure!(raw.status.success(),
+        "{}",
+        String::from_utf8_lossy(&raw.stderr)
+    );
+
+    Ok(String::from_utf8(raw.stdout)?)
+}
+
+fn usage_cmd() -> CmdOut {
+    let raw = Command::new("twin")
+                                .args(&["usage", "--json"])
+                                .output()?;
+
+    anyhow::ensure!(raw.status.success(),
+        "{}",
+        String::from_utf8_lossy(&raw.stderr)
+    );
+
+    Ok(String::from_utf8(raw.stdout)?)
+}
+
+fn watch_cmd(s: &str) -> CmdOut {
+    let raw = Command::new("twin")
+                                .args(&["watch", s, "--json"])
+                                .output()?;
+
+    anyhow::ensure!(raw.status.success(),
+        "{}",
+        String::from_utf8_lossy(&raw.stderr)
+    );
+
+    Ok(String::from_utf8(raw.stdout)?)
+}
+
+fn config_list_cmd() -> CmdOut {
+    let raw = Command::new("twin")
+                                .args(&["config", "list", "--json"])
+                                .output()?;
+
+    anyhow::ensure!(raw.status.success(),
+        "{}",
+        String::from_utf8_lossy(&raw.stderr)
+    );
+
+    Ok(String::from_utf8(raw.stdout)?)
+}
+
+fn config_list_models_cmd() -> CmdOut {
+    let raw = Command::new("twin")
+                                .args(&["config", "list-models", "--json"])
+                                .output()?;
+
+    anyhow::ensure!(raw.status.success(),
+        "{}",
+        String::from_utf8_lossy(&raw.stderr)
+    );
+
+    Ok(String::from_utf8(raw.stdout)?)
 }
