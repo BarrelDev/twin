@@ -1,13 +1,58 @@
+use std::sync::mpsc::Receiver;
+use serde::{Deserialize, Serialize};
+
+use crate::AgentEvent;
+
+/// Live state for the four bottom-bar dashboard widgets.
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct DashboardState {
+    // KB Stats widget
+    pub total_docs: u32,
+    pub total_chunks: u32,
+    pub last_ingest: Option<String>,
+
+    // Session Usage widget
+    pub session_calls: u32,
+    pub session_tokens: u64,
+    pub session_cost: Option<f64>,
+
+    // Active Provider widget
+    pub provider: String,
+    pub model: String,
+
+    // Vault Watcher widget
+    pub watcher_running: bool,
+    pub last_watcher_event: Option<String>,
+}
+
 pub struct TwinUIApp {
-    label: String,
-    value: f32
+    chat_messages: Vec<String>,
+    chat_input: String,
+    streaming_buffer: String,
+    rx: Option<Receiver<AgentEvent>>,
+    left_panel_open: bool,
+    right_panel_open: bool,
+    kb_docs: Vec<Option<String>>,
+    selected_doc: Option<String>,
+    agent_trace: Vec<String>,
+    agent_input: String,
+    dashboard: DashboardState,
 }
 
 impl Default for TwinUIApp {
     fn default() -> Self {
         Self {
-            label: "Hello World!".to_owned(),
-            value: 2.7,
+            chat_messages: Vec::new(),
+            chat_input: String::new(),
+            streaming_buffer: String::new(),
+            rx: None,
+            left_panel_open: false,
+            right_panel_open: false,
+            kb_docs: Vec::new(),
+            selected_doc: None,
+            agent_trace: Vec::new(),
+            agent_input: String::new(),
+            dashboard: DashboardState::default(),
         }
     }
 }
@@ -40,13 +85,13 @@ impl eframe::App for TwinUIApp {
             ui.heading("twin_ui");
             ui.horizontal(|ui| {
                 ui.label("Write something: ");
-                ui.text_edit_singleline(&mut self.label);
+                ui.text_edit_singleline(&mut self.chat_input);
             });
 
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                self.value += 1.0;
-            }
+            // ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
+            // if ui.button("Increment").clicked() {
+            //     self.value += 1.0;
+            // }
 
             ui.separator();
 
